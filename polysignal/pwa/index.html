@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0b0e14">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230b0e14'/%3E%3Cpath d='M25 62 L45 42 L58 55 L78 30' stroke='%2316c784' stroke-width='9' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>POLYSIGNAL</title>
+<style>
+  :root { --bg:#0b0e14; --card:#141a26; --fg:#e8ecf4; --dim:#8b93a7;
+          --up:#16c784; --down:#ea3943; --pass:#2b3245; --warn:#f5a623; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--fg); font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+         min-height:100vh; display:flex; flex-direction:column; align-items:center;
+         padding:12px; gap:12px; }
+  #mode { font-size:13px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; }
+  #mode.live { color:var(--up); font-weight:700; }
+  #card { width:100%; max-width:430px; background:var(--pass); border-radius:24px;
+          padding:34px 20px; text-align:center; transition:background .3s; }
+  #card.up { background:var(--up); color:#04321f; }
+  #card.down { background:var(--down); color:#3d0509; }
+  #card.dead { background:#20242e; color:var(--dim); }
+  #side { font-size:64px; font-weight:800; letter-spacing:4px; }
+  #stake { font-size:30px; font-weight:700; margin-top:2px; min-height:38px; }
+  #reason { font-size:13px; opacity:.75; margin-top:6px; }
+  #count { font-size:46px; font-variant-numeric:tabular-nums; font-weight:600; }
+  #countlbl { font-size:12px; color:var(--dim); letter-spacing:1px; }
+  .grid { width:100%; max-width:430px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .cell { background:var(--card); border-radius:14px; padding:12px 14px; }
+  .cell .l { font-size:11px; color:var(--dim); letter-spacing:1px; text-transform:uppercase; }
+  .cell .v { font-size:20px; font-variant-numeric:tabular-nums; margin-top:3px; }
+  #feeds { font-size:12px; color:var(--dim); }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:4px; margin:0 3px 0 10px; }
+  .ok { background:var(--up); } .bad { background:var(--down); }
+</style>
+</head>
+<body>
+  <div id="mode">connecting…</div>
+  <div id="card" class="dead">
+    <div id="side">—</div>
+    <div id="stake"></div>
+    <div id="reason">waiting for server</div>
+  </div>
+  <div style="text-align:center">
+    <div id="count">–:––</div>
+    <div id="countlbl">TO WINDOW CLOSE</div>
+  </div>
+  <div class="grid">
+    <div class="cell"><div class="l">P fair (up)</div><div class="v" id="pfair">–</div></div>
+    <div class="cell"><div class="l">Edge</div><div class="v" id="edge">–</div></div>
+    <div class="cell"><div class="l">Ask up / down</div><div class="v" id="asks">– / –</div></div>
+    <div class="cell"><div class="l">Spot vs open</div><div class="v" id="spot">–</div></div>
+  </div>
+  <div id="feeds"></div>
+<script>
+const $ = id => document.getElementById(id);
+let last = null, lastMsgAt = 0;
+
+function fmtCount(s) {
+  if (s == null || s < 0) return "–:––";
+  const m = Math.floor(s / 60), r = Math.floor(s % 60);
+  return m + ":" + String(r).padStart(2, "0");
+}
+
+function render() {
+  const stale = Date.now() - lastMsgAt > 5000;
+  if (stale || !last) {                       // server-down state: explicit, not frozen
+    $("card").className = "dead";
+    $("side").textContent = "OFFLINE";
+    $("stake").textContent = "";
+    $("reason").textContent = "no data from server — do not trade on this screen";
+    $("mode").textContent = "disconnected";
+    return;
+  }
+  const p = last, sig = p.signal || {side: "PASS", stake: 0, reason: "no signal"};
+  $("mode").textContent = p.mode + (p.warmup ? " · warmup" : "") +
+      (p.gate1 ? " · G1✓" : " · G1✗") + (p.gate2 ? " G2✓" : " G2✗");
+  $("mode").className = p.mode === "LIVE" ? "live" : "";
+  const side = sig.side || "PASS";
+  $("card").className = side === "UP" ? "up" : side === "DOWN" ? "down" : "";
+  $("side").textContent = side;
+  $("stake").textContent = side === "PASS" ? "" : "$" + (sig.stake || 0).toFixed(0);
+  $("reason").textContent = (sig.locked ? "🔒 " : "") + (sig.reason || "");
+  $("pfair").textContent = sig.p_fair == null ? "–" : sig.p_fair.toFixed(3);
+  $("edge").textContent = (sig.edge * 100).toFixed(1) + "¢";
+  $("asks").textContent = (p.ask_up ?? "–") + " / " + (p.ask_down ?? "–");
+  $("spot").textContent = (p.s_est ? p.s_est.toFixed(0) : "–") + " / " +
+                          (p.s_open ? p.s_open.toFixed(0) : "–");
+  const drift = (Date.now() / 1000) - p.ts;
+  $("count").textContent = fmtCount((p.t_remaining ?? 0) - Math.max(0, drift));
+  $("feeds").innerHTML = "binance<span class='dot " + (p.feeds?.binance ? "ok" : "bad") +
+      "'></span> oracle<span class='dot " + (p.feeds?.oracle ? "ok" : "bad") + "'></span>";
+}
+
+function connect() {
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
+                           location.host + "/ws");
+  ws.onmessage = e => { last = JSON.parse(e.data); lastMsgAt = Date.now(); };
+  ws.onclose = () => setTimeout(connect, 1500);
+  ws.onerror = () => ws.close();
+}
+connect();
+setInterval(render, 250);
+</script>
+</body>
+</html>

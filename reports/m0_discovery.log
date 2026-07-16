@@ -1,0 +1,16 @@
+[18:30:10Z] M0 discovery spike — running 31 minutes
+[18:30:10Z] window 1784226600 [btc-updown-5m-1784226600] identified in 10.947s | fee=1000.0bps tick=0.01 minOrder=5.0
+[18:30:11Z] window 1784226600 book: up={'bid': 0.4, 'ask': 0.41, 'bid_depth_usd': 240.36, 'ask_depth_usd': 974.57} down={'bid': 0.59, 'ask': 0.6, 'bid_depth_usd': 1402.43, 'ask_depth_usd': 360.54}
+[18:30:11Z] window 1784226600: partial cold-start window — S_open n/a (WARMUP)
+[18:35:00Z] window 1784226900 [btc-updown-5m-1784226900] identified in 0.101s | fee=1000.0bps tick=0.01 minOrder=5.0
+[18:35:00Z] window 1784226900 book: up={'bid': 0.5, 'ask': 0.51, 'bid_depth_usd': 15.0, 'ask_depth_usd': 601.82} down={'bid': 0.49, 'ask': 0.5, 'bid_depth_usd': 578.21, 'ask_depth_usd': 15.0}
+[18:35:07Z] window 1784226900 S_open(oracle)=64142.45 captured +7.801s | binance_now=64152.0
+[18:40:00Z] window 1784227200 [btc-updown-5m-1784227200] identified in 0.111s | fee=1000.0bps tick=0.01 minOrder=5.0
+[18:40:00Z] window 1784227200 book: up={'bid': 0.52, 'ask': 0.53, 'bid_depth_usd': 66.39, 'ask_depth_usd': 249.21} down={'bid': 0.47, 'ask': 0.48, 'bid_depth_usd': 220.99, 'ask_depth_usd': 58.89}
+[18:40:03Z] window 1784227200 S_open(oracle)=64091.58 captured +3.335s | binance_now=64132.0
+[18:45:00Z] window 1784227500 [btc-updown-5m-1784227500] identified in 0.16s | fee=1000.0bps tick=0.01 minOrder=5.0
+[18:45:00Z] window 1784227500 book: up={'bid': 0.52, 'ask': 0.53, 'bid_depth_usd': 49.37, 'ask_depth_usd': 174.15} down={'bid': 0.47, 'ask': 0.48, 'bid_depth_usd': 154.43, 'ask_depth_usd': 45.57}
+[18:45:08Z] window 1784227500 S_open(oracle)=64102.40 captured +8.392s | binance_now=64142.0
+[18:50:00Z] window 1784227800 [btc-updown-5m-1784227800] identified in 0.152s | fee=1000.0bps tick=0.01 minOrder=5.0
+[18:50:00Z] window 1784227800 book: up={'bid': 0.5, 'ask': 0.51, 'bid_depth_usd': 278.24, 'ask_depth_usd': 83.91} down={'bid': 0.49, 'ask': 0.5, 'bid_depth_usd': 80.61, 'ask_depth_usd': 275.74}
+[18:50:03Z] window 1784227800 S_open(oracle)=64184.45 captured +3.826s | binance_now=64232.82
