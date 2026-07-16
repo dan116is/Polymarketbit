@@ -83,9 +83,12 @@ auto-restart; state survives restarts (SQLite, idempotent per window).
   Evidence: `reports/m0_discovery.log`.
 - **M1 ✓** — engine runs, logs every window/tick to SQLite, WS auto-reconnect,
   idempotent upserts. (24h uptime soak pending on the permanent Windows box.)
-- **M2 ✓ / GATE 1: see `reports/backtest.md`** — the number that matters:
-  model edge is real at 0s latency but decays ~1¢/s of execution delay; see
-  the report's verdict + NO-GO analysis before any LIVE use.
+- **M2 ✓ / GATE 1: RED → NO-GO for manual LIVE** — the model is calibrated
+  (Brier 0.19) and has real edge at 0s latency (+3.8¢/share after fees), but
+  it decays ~1¢/s of execution delay: all 300 grid configs and 3 model
+  iterations are negative at 5s hand latency. Full verdict:
+  `reports/GATE1_NO_GO.md`. The only realistic path to the edge is M6 (bot),
+  a separate explicit decision.
 - **M3 ✓ code** — Telegram alert + kill-switch commands, PWA. Phone-side
   verification (screenshot, ≤2s p95 alert) requires Daniel's device + token.
 - **M4 ready** — PAPER mode with simulated 5s hand latency is the default
