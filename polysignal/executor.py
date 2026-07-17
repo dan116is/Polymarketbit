@@ -60,6 +60,18 @@ class ShadowExecutor:
             self._client = _make_clob_client(throwaway)
         return self._client
 
+    async def warmup(self) -> None:
+        """Pre-build one dummy order at startup: client construction and
+        module imports cost ~1.2s the FIRST time — the real bot pre-warms the
+        same way, so measurements must reflect steady state, not cold start."""
+        try:
+            client = await asyncio.to_thread(self._ensure_client)
+            await asyncio.to_thread(
+                _build_signed_order, client, "1" * 70, 0.5, 1.0, 0.01, False)
+            log.info("shadow executor warmed up")
+        except Exception as e:
+            log.warning("shadow warmup failed: %r", e)
+
     async def on_signal(self, st, sig, mode: str) -> None:
         """st: engine WindowState with a live CLOB-WS book; sig: quant.Signal."""
         if not st.market or sig.side not in ("UP", "DOWN"):

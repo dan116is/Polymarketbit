@@ -47,6 +47,7 @@ async def main():
         from polysignal.executor import LiveExecutor, ShadowExecutor
         engine.executor = ShadowExecutor(store, cfg)
         engine.live_executor = LiveExecutor(store, engine.risk, cfg)
+        asyncio.get_running_loop().create_task(engine.executor.warmup())
 
     if args.with_delivery:
         from polysignal.delivery.telegram import TelegramNotifier
