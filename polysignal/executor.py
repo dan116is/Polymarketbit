@@ -153,6 +153,17 @@ class LiveExecutor:
             self.store.log_event("LIVE_BOT_REFUSED", json.dumps(
                 {"window_ts": st.window_ts, "reason": why}))
             return {"sent": False, "reason": why}
+        # book sanity BEFORE any client/network work: with the CLOB WS down
+        # the REST fallback refreshes only every ~4s — never cross an ask that
+        # old, the edge model priced a book that no longer exists
+        book = st.book.get(sig.side.lower())
+        ask = book[1] if book else None
+        if ask is None or not (0 < ask < 1):
+            return {"sent": False, "reason": "no_book"}
+        if time.time() - (getattr(st, "book_at", 0.0) or 0.0) > 2.0:
+            self.store.log_event("LIVE_BOT_REFUSED", json.dumps(
+                {"window_ts": st.window_ts, "reason": "stale_book"}))
+            return {"sent": False, "reason": "stale_book"}
         # every lock is open — build and send a real (tiny) order
         if self._client is None:
             self._client = _make_clob_client(
@@ -162,10 +173,6 @@ class LiveExecutor:
             self._client.set_api_creds(creds)
         token = (st.market.token_id_up if sig.side == "UP"
                  else st.market.token_id_down)
-        book = st.book.get(sig.side.lower())
-        ask = book[1] if book else None
-        if ask is None or not (0 < ask < 1):
-            return {"sent": False, "reason": "no_book"}
         stake = min(sig.stake_usd, float(self.cfg["m6"].get("max_stake_usd", 1.0)))
         price = min(0.99, ask + 0.02)  # marketable cap
         order = await asyncio.to_thread(
