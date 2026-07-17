@@ -39,20 +39,21 @@
   <div id="mode">מתחבר…</div>
   <div id="card" class="dead">
     <div id="side">—</div>
+    <div id="sub" style="font-size:15px;font-weight:600;margin-top:4px;opacity:.85"></div>
     <div id="stake"></div>
-    <div id="reason">ממתין לשרת</div>
+    <div id="reason">רגע, מתחבר לשרת…</div>
   </div>
   <div style="text-align:center">
     <div id="count">–:––</div>
-    <div id="countlbl">לסגירת החלון</div>
+    <div id="countlbl">עד סוף הסיבוב הנוכחי</div>
   </div>
   <div class="grid">
-    <div class="cell"><div class="l">P fair (עלייה)</div><div class="v" id="pfair">–</div></div>
-    <div class="cell"><div class="l">Edge</div><div class="v" id="edge">–</div></div>
-    <div class="cell"><div class="l">Ask ‏Up / Down</div><div class="v" id="asks">– / –</div></div>
-    <div class="cell"><div class="l">ספוט / פתיחה</div><div class="v" id="spot">–</div></div>
-    <div class="cell"><div class="l">PnL היום</div><div class="v" id="pnl">–</div></div>
-    <div class="cell"><div class="l">בסיס Binance−אורקל</div><div class="v" id="basis">–</div></div>
+    <div class="cell"><div class="l">סיכוי לעלייה (לפי המודל)</div><div class="v" id="pfair">–</div></div>
+    <div class="cell"><div class="l">הפער מול השוק</div><div class="v" id="edge">–</div></div>
+    <div class="cell"><div class="l">מחיר עלייה / ירידה בשוק</div><div class="v" id="asks">– / –</div></div>
+    <div class="cell"><div class="l">ביטקוין עכשיו / בפתיחה</div><div class="v" id="spot">–</div></div>
+    <div class="cell"><div class="l">רווח/הפסד היום</div><div class="v" id="pnl">–</div></div>
+    <div class="cell"><div class="l">הפרש מקורות (טכני)</div><div class="v" id="basis">–</div></div>
   </div>
   <button id="acted" style="display:none;background:var(--card);color:var(--fg);
       border:1px solid var(--dim);border-radius:14px;padding:12px 26px;font-size:16px">
@@ -64,20 +65,22 @@ const $ = id => document.getElementById(id);
 let last = null, lastMsgAt = 0;
 
 const REASONS = {
-  warming_up: "חימום — אוסף נתונים",
-  outside_time_band: "מחוץ לחלון האיתות (15–120s)",
-  edge_below_theta: "אין פער מעל הסף",
-  no_quotes: "אין ציטוטים בספר",
-  insufficient_depth: "אין עומק מספיק בספר",
-  edge_above_theta: "פער מעל הסף",
-  restored: "שוחזר אחרי ריסטארט",
+  warming_up: "אוסף נתונים…",
+  outside_time_band: "מוקדם מדי או מאוחר מדי בסיבוב — ממתין",
+  edge_below_theta: "אין הזדמנות כרגע",
+  no_quotes: "אין מחירים בשוק כרגע",
+  insufficient_depth: "אין מספיק סחורה בשוק",
+  edge_above_theta: "נמצאה הזדמנות",
+  restored: "האיתות נשמר אחרי הפעלה מחדש",
 };
 const BLOCKED = {
-  kill_switch: "🛑 מתג חירום פעיל",
-  gates_not_green: "🔒 השערים לא ירוקים — אין LIVE",
-  daily_stop: "🛑 תקרת הפסד יומית — נעול",
-  one_position_per_window: "פוזיציה אחת לחלון",
+  kill_switch: "🛑 עצרת את המערכת (/resume בטלגרם מחזיר)",
+  gates_not_green: "🔒 מסחר אמיתי נעול — בדיקות האיכות לא עברו",
+  daily_stop: "🛑 נעצר להיום — הגעת לתקרת ההפסד היומית",
+  one_position_per_window: "כבר היה איתות בסיבוב הזה",
 };
+const SIDE_HE = {UP: "עלייה", DOWN: "ירידה", PASS: "ממתין"};
+const cents = p => p==null ? "–" : Math.round(p*100)+"¢";
 function reasonText(r) {
   if (!r) return "";
   if (r.startsWith("blocked:")) {
@@ -100,20 +103,24 @@ function render() {
   const stale = Date.now() - lastMsgAt > 5000;
   if (stale || !last) {                       // מצב שרת-נפל: מפורש, לא מסך קפוא
     $("card").className = "dead";
-    $("side").textContent = "OFFLINE";
+    $("side").textContent = "אין חיבור";
+    $("sub").textContent = "";
     $("stake").textContent = "";
-    $("reason").textContent = "אין נתונים מהשרת — לא לסחור לפי המסך הזה";
+    $("reason").textContent = "השרת לא משדר — לא לפעול לפי המסך הזה";
     $("mode").textContent = "מנותק";
     return;
   }
   const p = last, sig = p.signal || {side: "PASS", stake: 0, reason: "warming_up"};
-  $("mode").textContent = p.mode + (p.warmup ? " · חימום" : "") +
-      (p.gate1 ? " · G1✓" : " · G1✗") + (p.gate2 ? " G2✓" : " G2✗");
+  const modeName = p.mode === "LIVE" ? "מצב אמיתי" : "מצב תרגול";
+  $("mode").textContent = modeName + (p.warmup ? " · מתכונן" : "") +
+      (p.gate1 && p.gate2 ? " · הבדיקות עברו ✓" : " · מסחר אמיתי נעול 🔒");
   $("mode").className = p.mode === "LIVE" ? "live" : "";
   const side = sig.side || "PASS";
   $("card").className = side === "UP" ? "up" : side === "DOWN" ? "down" : "";
-  $("side").textContent = side;
-  $("stake").textContent = side === "PASS" ? "" : "$" + (sig.stake || 0).toFixed(0);
+  $("side").textContent = SIDE_HE[side] || side;
+  $("sub").textContent = side === "UP" ? "בפולימרקט זה הכפתור UP"
+                       : side === "DOWN" ? "בפולימרקט זה הכפתור DOWN" : "";
+  $("stake").textContent = side === "PASS" ? "" : "סכום: $" + (sig.stake || 0).toFixed(0);
   $("reason").textContent = (sig.locked ? "🔒 " : "") + reasonText(sig.reason);
   // "I clicked" button: appears while a signal is locked and unmarked; feeds
   // the acted column that LIVE risk accounting tracks
@@ -121,23 +128,25 @@ function render() {
   $("acted").style.display = showActed ? "" : "none";
   $("acted").dataset.win = p.window_ts;
   const rec = p.recent || [];
-  $("recent").innerHTML = rec.length ? "אחרונים: " + rec.map(e =>
-      `<span dir="ltr">${e.side} $${(e.stake||0).toFixed(0)} ${e.won?"✓":"✗"}${e.pnl!=null?(e.pnl>=0?" +":" ")+e.pnl.toFixed(2):""}</span>`
+  $("recent").innerHTML = rec.length ? "האיתותים האחרונים: " + rec.map(e =>
+      `${SIDE_HE[e.side]||e.side} $${(e.stake||0).toFixed(0)} ${e.won?"✓ הצליח":"✗ פספס"}` +
+      (e.pnl!=null?` <span dir="ltr">${e.pnl>=0?"+":""}${e.pnl.toFixed(2)}$</span>`:"")
   ).join(" · ") : "";
-  $("pfair").textContent = sig.p_fair == null ? "–" : sig.p_fair.toFixed(3);
-  $("edge").textContent = (sig.edge * 100).toFixed(1) + "¢";
-  $("asks").textContent = (p.ask_up ?? "–") + " / " + (p.ask_down ?? "–");
-  $("spot").textContent = (p.s_est ? p.s_est.toFixed(0) : "–") + " / " +
-                          (p.s_open ? p.s_open.toFixed(0) : "–");
+  $("pfair").textContent = sig.p_fair == null ? "–" : Math.round(sig.p_fair*100) + "%";
+  $("edge").textContent = (sig.edge >= 0 ? "+" : "") + (sig.edge * 100).toFixed(1) + "¢";
+  $("asks").textContent = cents(p.ask_up) + " / " + cents(p.ask_down);
+  $("spot").textContent =
+      (p.s_est ? Math.round(p.s_est).toLocaleString("en-US") : "–") + " / " +
+      (p.s_open ? Math.round(p.s_open).toLocaleString("en-US") : "–");
   $("pnl").textContent = p.day_pnl == null ? "–" :
-      (p.day_pnl >= 0 ? "+" : "") + "$" + p.day_pnl.toFixed(2);
+      (p.day_pnl >= 0 ? "+$" : "-$") + Math.abs(p.day_pnl).toFixed(2);
   $("pnl").style.color = p.day_pnl > 0 ? "var(--up)" : p.day_pnl < 0 ? "var(--down)" : "";
   $("basis").textContent = p.basis == null ? "–" :
-      (p.basis >= 0 ? "+" : "") + "$" + p.basis.toFixed(1);
+      (p.basis >= 0 ? "+" : "") + "$" + p.basis.toFixed(0);
   const drift = (Date.now() / 1000) - p.ts;
   $("count").textContent = fmtCount((p.t_remaining ?? 0) - Math.max(0, drift));
-  $("feeds").innerHTML = "binance<span class='dot " + (p.feeds?.binance ? "ok" : "bad") +
-      "'></span> oracle<span class='dot " + (p.feeds?.oracle ? "ok" : "bad") + "'></span>";
+  $("feeds").innerHTML = "נתונים חיים: מחיר<span class='dot " + (p.feeds?.binance ? "ok" : "bad") +
+      "'></span> אורקל<span class='dot " + (p.feeds?.oracle ? "ok" : "bad") + "'></span>";
 }
 
 const actedMarked = new Set();

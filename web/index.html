@@ -39,24 +39,26 @@
   <div id="mode">מתחבר…</div>
   <div id="card" class="dead">
     <div id="side">—</div>
+    <div id="sub" style="font-size:15px;font-weight:600;margin-top:4px;opacity:.85"></div>
     <div id="stake"></div>
-    <div id="reason">ממתין לנתונים</div>
+    <div id="reason">רגע, מתחבר לנתונים…</div>
   </div>
   <div style="text-align:center">
     <div id="count">–:––</div>
-    <div id="countlbl">לסגירת החלון</div>
+    <div id="countlbl">עד סוף הסיבוב הנוכחי</div>
   </div>
   <div class="grid">
-    <div class="cell"><div class="l">P fair (עלייה)</div><div class="v" id="pfair">–</div></div>
-    <div class="cell"><div class="l">Edge</div><div class="v" id="edge">–</div></div>
-    <div class="cell"><div class="l">Ask ‏Up / Down</div><div class="v" id="asks">– / –</div></div>
-    <div class="cell"><div class="l">ספוט / פתיחה</div><div class="v" id="spot">–</div></div>
-    <div class="cell"><div class="l">PnL היום (נייר)</div><div class="v" id="pnl">$0.00</div></div>
-    <div class="cell"><div class="l">בסיס Binance−אורקל</div><div class="v" id="basis">–</div></div>
+    <div class="cell"><div class="l">סיכוי לעלייה (לפי המודל)</div><div class="v" id="pfair">–</div></div>
+    <div class="cell"><div class="l">הפער מול השוק</div><div class="v" id="edge">–</div></div>
+    <div class="cell"><div class="l">מחיר עלייה / ירידה בשוק</div><div class="v" id="asks">– / –</div></div>
+    <div class="cell"><div class="l">ביטקוין עכשיו / בפתיחה</div><div class="v" id="spot">–</div></div>
+    <div class="cell"><div class="l">רווח/הפסד היום (תרגול)</div><div class="v" id="pnl">$0.00</div></div>
+    <div class="cell"><div class="l">איתותים היום</div><div class="v" id="sigcount">0</div></div>
   </div>
   <div id="feeds"></div>
   <div id="history" style="width:100%;max-width:430px;font-size:12px;color:var(--dim)"></div>
-  <div id="disclaimer">מצב MONITOR‏ (PAPER) — תצוגת שוק חיה בלבד, לא המלצת כסף. GATE 1 אדום: ראה reports/GATE1_NO_GO.md</div>
+  <div id="disclaimer">מסך תרגול בלבד — שום דבר כאן הוא לא המלצה לכסף אמיתי.
+    מסחר אמיתי נשאר נעול עד ששתי בדיקות האיכות של המערכת יעברו בירוק.</div>
 <script>
 "use strict";
 /* POLYSIGNAL standalone monitor — the whole engine in the browser.
@@ -338,41 +340,50 @@ function currentView(){
   }
   return {side:"PASS", stake:0, edge, pFair:pf, tau};
 }
+const SIDE_HE = {UP: "עלייה", DOWN: "ירידה", PASS: "ממתין"};
+const cents = p => p==null ? "–" : Math.round(p*100)+"¢";
+
 function render(){
   const stale = nowS()-S.lastDataAt > 8;
   const t = nowS();
   if(stale){
-    $("card").className="dead"; $("side").textContent="OFFLINE";
-    $("stake").textContent=""; $("reason").textContent="אין נתונים — לא לסחור לפי המסך הזה";
+    $("card").className="dead"; $("side").textContent="אין חיבור";
+    $("sub").textContent=""; $("stake").textContent="";
+    $("reason").textContent="בדוק שיש אינטרנט, או סגור ופתח את האפליקציה";
     $("mode").textContent="מנותק"; return;
   }
   const v = currentView();
   const warm = S.win===S.warmupWin || S.sOpen==null;
-  $("mode").textContent = "MONITOR · PAPER" + (warm?" · חימום":"");
+  $("mode").textContent = "מצב תרגול — לא כסף אמיתי" + (warm?" · מתכונן":"");
   const side = v?v.side:"PASS";
   $("card").className = side==="UP"?"up":side==="DOWN"?"down":"";
-  $("side").textContent = side;
-  $("stake").textContent = (v && v.side!=="PASS") ? "$"+v.stake.toFixed(0)+" (נייר)" : "";
-  $("reason").textContent = S.signal ? "🔒 איתות ננעל לחלון הזה"
-      : warm ? "ממתין לפתיחת החלון הבא (חימום)" : (v?"אין פער מעל הסף":"אוסף נתונים…");
-  $("pfair").textContent = v?v.pFair.toFixed(3):"–";
-  $("edge").textContent = v&&v.edge>-1 ? (v.edge*100).toFixed(1)+"¢" : "–";
-  $("asks").textContent = (S.book.up?S.book.up[1]:"–")+" / "+(S.book.down?S.book.down[1]:"–");
+  $("side").textContent = SIDE_HE[side] || side;
+  $("sub").textContent = side==="UP" ? "בפולימרקט זה הכפתור UP"
+                       : side==="DOWN" ? "בפולימרקט זה הכפתור DOWN" : "";
+  $("stake").textContent = (v && v.side!=="PASS") ? "סכום לתרגול: $"+v.stake.toFixed(0) : "";
+  $("reason").textContent = S.signal ? "🔒 האיתות נקבע לסיבוב הזה"
+      : warm ? "מתכונן — מחכה לתחילת הסיבוב הבא" : (v?"אין הזדמנות כרגע":"אוסף נתונים…");
+  $("pfair").textContent = v ? Math.round(v.pFair*100)+"%" : "–";
+  $("edge").textContent = v&&v.edge>-1 ? ((v.edge>=0?"+":"")+(v.edge*100).toFixed(1)+"¢") : "–";
+  $("asks").textContent = cents(S.book.up?S.book.up[1]:null)+" / "+cents(S.book.down?S.book.down[1]:null);
   const sEst=spotEstimate();
-  $("spot").textContent = (sEst?sEst.toFixed(0):"–")+" / "+(S.sOpen?S.sOpen.toFixed(0):"–");
+  $("spot").textContent = (sEst?Math.round(sEst).toLocaleString("en-US"):"–")+" / "
+                        + (S.sOpen?Math.round(S.sOpen).toLocaleString("en-US"):"–");
   const rem = S.win ? Math.max(0, S.win+CFG.windowSeconds-t) : null;
   $("count").textContent = rem==null?"–:––":`${Math.floor(rem/60)}:${String(Math.floor(rem%60)).padStart(2,"0")}`;
-  $("feeds").innerHTML = "binance<span class='dot "+(S.feeds.binance?"ok":"bad")+
-      "'></span> oracle<span class='dot "+(S.feeds.oracle&&t-S.oracleLatestTs<30?"ok":"bad")+"'></span>";
-  const dp = dayPnl();
-  $("pnl").textContent = (dp>=0?"+":"")+"$"+dp.toFixed(2);
-  $("pnl").style.color = dp>0?"var(--up)":dp<0?"var(--down)":"";
   const anchor = S.oracle.get(S.oracleLatestTs);
-  $("basis").textContent = (S.binance!=null && anchor!=null)
-      ? ((S.binance-anchor>=0?"+":"")+"$"+(S.binance-anchor).toFixed(1)) : "–";
+  const basisTxt = (S.binance!=null && anchor!=null)
+      ? ` · הפרש מקורות <span dir="ltr">$${(S.binance-anchor).toFixed(0)}</span>` : "";
+  $("feeds").innerHTML = "נתונים חיים: מחיר<span class='dot "+(S.feeds.binance?"ok":"bad")+
+      "'></span> אורקל<span class='dot "+(S.feeds.oracle&&t-S.oracleLatestTs<30?"ok":"bad")+"'></span>"+basisTxt;
+  const dp = dayPnl();
+  $("pnl").textContent = (dp>=0?"+$":"-$")+Math.abs(dp).toFixed(2);
+  $("pnl").style.color = dp>0?"var(--up)":dp<0?"var(--down)":"";
+  const day0 = Math.floor(nowS()/86400)*86400;
+  $("sigcount").textContent = history().filter(e=>e.win>=day0).length;
   const h = history().slice(-3).reverse();
-  $("history").innerHTML = h.length ? "איתותים אחרונים (נייר): " + h.map(e =>
-      `<span dir="ltr">${e.side} $${e.stake}@${e.ask} → ${e.outcome===e.side?"✓":"✗"} ${e.pnl>=0?"+":""}${e.pnl.toFixed(2)}</span>`
+  $("history").innerHTML = h.length ? "האיתותים האחרונים: " + h.map(e =>
+      `${SIDE_HE[e.side]||e.side} $${e.stake} ${e.outcome===e.side?"✓ הצליח":"✗ פספס"} <span dir="ltr">${e.pnl>=0?"+":""}${e.pnl.toFixed(2)}$</span>`
   ).join(" · ") : "";
 }
 
