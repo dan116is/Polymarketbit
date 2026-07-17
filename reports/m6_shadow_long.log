@@ -1,3 +1,7 @@
 2026-07-17 18:04:35,614 polysignal.executor INFO shadow executor warmed up
 2026-07-17 18:04:35,919 polysignal.feeds INFO oracle RTDS connected
 2026-07-17 18:04:36,351 polysignal.feeds INFO binance connected: wss://data-stream.binance.vision/ws/btcusdt@trade
+2026-07-17 18:16:52,513 polysignal.feeds WARNING binance disconnected: ConnectionClosedError(None, None, None) — reconnect in 1s
+2026-07-17 18:16:52,514 polysignal.feeds WARNING oracle disconnected: ConnectionClosedError(None, None, None) — reconnect in 1s
+2026-07-17 18:16:53,518 polysignal.feeds WARNING binance disconnected: ConnectionRefusedError(111, "Connect call failed ('127.0.0.1', 42721)") — reconnect in 2s
+2026-07-17 18:16:53,519 polysignal.feeds WARNING oracle disconnected: ConnectionRefusedError(111, "Connect call failed ('127.0.0.1', 42721)") — reconnect in 2s

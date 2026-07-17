@@ -594,6 +594,7 @@ setInterval(render, 250);
 // refocus recycle each stale feed independently
 document.addEventListener("visibilitychange", () => {
   if(document.hidden) return;
+  mergeCloudHistory();
   if(nowS()-S.oracleLatestTs > 20){ try{S.oracleWs && S.oracleWs.close()}catch(e){} }
   if(nowS()-S.binanceTs > 20){ try{S.binWs && S.binWs.close()}catch(e){} }
   if(S.market && S.bookAt && nowS()-S.bookAt > 20){
@@ -602,6 +603,33 @@ document.addEventListener("visibilitychange", () => {
   }
   acquireWakeLock();
 });
+
+// ---------- cloud history merge: the watcher documents every round and
+// signal even while the app is closed — pull and merge on load/refocus ----------
+async function mergeCloudHistory(){
+  try{
+    const r = await fetch("/api/history", {signal: AbortSignal.timeout(8000)});
+    if(!r.ok) return;
+    const {rounds, signals} = await r.json();
+    let changed = false;
+    for(const c of (rounds||[])){
+      if(!R.some(x=>x.win===c.win)){ R.push(c); changed = true; }
+    }
+    for(const c of (signals||[])){
+      const mine = H.find(x=>x.win===c.win);
+      if(!mine){ H.push({...c, cloudOnly:true}); changed = true; }
+      else if(mine.pnl==null && c.pnl!=null){
+        Object.assign(mine, {outcome:c.outcome, pnl:c.pnl}); changed = true;
+      }
+    }
+    if(changed){
+      R.sort((a,b)=>a.win-b.win); H.sort((a,b)=>a.win-b.win);
+      saveR(); saveH();
+    }
+  }catch(e){}
+}
+mergeCloudHistory();
+setInterval(mergeCloudHistory, 300_000);
 
 // ---------- background push (works only on the hosted site) ----------
 const b64uToU8 = s => { const b=atob(s.replace(/-/g,"+").replace(/_/g,"/"));
