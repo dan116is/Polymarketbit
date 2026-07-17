@@ -1,0 +1,3 @@
+2026-07-17 18:04:35,614 polysignal.executor INFO shadow executor warmed up
+2026-07-17 18:04:35,919 polysignal.feeds INFO oracle RTDS connected
+2026-07-17 18:04:36,351 polysignal.feeds INFO binance connected: wss://data-stream.binance.vision/ws/btcusdt@trade
