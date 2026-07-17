@@ -64,9 +64,9 @@ class TelegramNotifier:
             return
         emoji = "🟢⬆️" if side == "UP" else "🔴⬇️"
         txt = (f"{emoji} <b>{side}</b> ${sig.get('stake', 0):.0f}\n"
-               f"edge {sig.get('edge', 0)*100:+.1f}c | P_fair {sig.get('p_fair', 0):.2f}\n"
-               f"ask_up {payload.get('ask_up')} ask_down {payload.get('ask_down')}\n"
-               f"{payload.get('t_remaining', '?')}s left | {payload.get('mode')}")
+               f"פער {sig.get('edge', 0)*100:+.1f}¢ | P_fair {sig.get('p_fair', 0):.2f}\n"
+               f"ask עלייה {payload.get('ask_up')} | ask ירידה {payload.get('ask_down')}\n"
+               f"נותרו {payload.get('t_remaining', '?')} שניות | מצב {payload.get('mode')}")
         ms = await self.send(txt)
         log.info("signal alert sent in %.0fms", ms or -1)
 
@@ -92,20 +92,20 @@ class TelegramNotifier:
                 text = (msg.get("text") or "").strip().lower()
                 if text.startswith("/kill"):
                     risk.kill(True)
-                    await self.send("🛑 kill switch ON — no signals until /resume")
+                    await self.send("🛑 מתג החירום הופעל — אין איתותים עד /resume")
                 elif text.startswith("/resume"):
                     risk.kill(False)
-                    await self.send("▶️ kill switch OFF")
+                    await self.send("▶️ מתג החירום כובה — האיתותים חזרו")
                 elif text.startswith("/status") and engine is not None:
                     p = engine.status_payload()
                     sig = p.get("signal") or {}
                     await self.send(
-                        f"mode {p['mode']} | window {p.get('window_ts')} "
-                        f"({p.get('t_remaining')}s left)\n"
-                        f"signal {sig.get('side')} edge {sig.get('edge', 0)*100:+.1f}c\n"
-                        f"feeds binance={'ok' if p['feeds']['binance'] else 'DOWN'} "
-                        f"oracle={'ok' if p['feeds']['oracle'] else 'DOWN'}\n"
-                        f"gates G1={'✓' if p['gate1'] else '✗'} G2={'✓' if p['gate2'] else '✗'}")
+                        f"מצב {p['mode']} | חלון {p.get('window_ts')} "
+                        f"(נותרו {p.get('t_remaining')} שניות)\n"
+                        f"איתות {sig.get('side')} | פער {sig.get('edge', 0)*100:+.1f}¢\n"
+                        f"פידים: binance {'תקין' if p['feeds']['binance'] else '⚠ מנותק'} | "
+                        f"oracle {'תקין' if p['feeds']['oracle'] else '⚠ מנותק'}\n"
+                        f"שערים: G1 {'✓' if p['gate1'] else '✗'} | G2 {'✓' if p['gate2'] else '✗'}")
 
     async def close(self):
         if self._session and not self._session.closed:

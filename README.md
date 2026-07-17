@@ -1,98 +1,96 @@
 # POLYSIGNAL
 
-Personal signal system for Polymarket's 5-minute BTC Up/Down markets: a
-deterministic fair-value engine + phone PWA + Telegram alerts. **No AI predicts
-direction and the code never trades real money** — it computes the gap between
-the mathematical probability of Up and the quoted order-book price, and says
-`UP / DOWN / PASS` with a $1/$2/$5 stake recommendation, gated behind two
-quantitative GO/NO-GO gates (backtest, then paper trading).
+מערכת איתותים אישית לשוקי ה-BTC Up/Down של 5 דקות ב-Polymarket: מנוע fair-value
+דטרמיניסטי + אפליקציית PWA לטלפון + התראות טלגרם. **שום AI לא מנבא כיוון,
+והקוד לא מבצע שום מסחר בכסף אמיתי** — המערכת מחשבת את הפער בין ההסתברות
+המתמטית לעלייה לבין המחיר המצוטט בספר הפקודות, ואומרת `UP / DOWN / PASS`
+עם המלצת סכום ‎$1/$2/$5, מאחורי שני שערי GO/NO-GO כמותיים (backtest ואז paper).
 
-Built per `POLYSIGNAL-MASTER-PLAN.md` (the project INIT). Hard boundaries:
-signals only, $5 max recommendation, −$10 daily tracked loss → 24h LIVE lock,
-no martingale, LIVE display refuses to open unless GATE 1 + GATE 2 are green
-in the database — there is no override in code.
+נבנה לפי `POLYSIGNAL-MASTER-PLAN.md` (מסמך ה-INIT של הפרויקט). גבולות קשיחים:
+איתותים בלבד, מקסימום ‎$5 להמלצה, הפסד יומי במעקב של ‎−$10 ← נעילת LIVE
+ל-24 שעות, אין מרטינגייל, ותצוגת LIVE מסרבת להיפתח כל עוד GATE 1 + GATE 2
+לא ירוקים במסד הנתונים — אין override בקוד.
 
-## Architecture
+## ארכיטקטורה
 
 ```
 WATCHER                     QUANT                   RISK              DELIVERY
-Binance WS (spot proxy)     P_up = Φ(ln(S/S₀)/σ√τ)  EV threshold θ    Telegram alerts + /kill
-RTDS Chainlink WS (oracle)  σ = EWMA 1s log-returns $1/$2/$5 ladder   PWA (WS live card)
-CLOB REST (books)           EV vs ask − fee − buf   daily stop, locks
-Gamma (slug → market meta)            ↓
-                            SQLite: every tick, signal, outcome → ANALYST daily report
+Binance WS (פרוקסי ספוט)    P_up = Φ(ln(S/S₀)/σ√τ)  סף EV‏ θ           התראות טלגרם + /kill
+RTDS Chainlink WS (אורקל)   σ = EWMA תשואות שנייה   סולם $1/$2/$5     PWA (כרטיס חי ב-WS)
+CLOB REST (ספרים)           EV מול ask − עמלה − buf  stop יומי, נעילות
+Gamma (‏slug ← מטא-דאטה)               ↓
+                            SQLite: כל tick, איתות ותוצאה ← דוח ANALYST יומי
 ```
 
-- **Market identification is deterministic**: `window_ts = now − (now % 300)` →
-  slug `btc-updown-5m-{window_ts}` → Gamma returns `clobTokenIds`, fee, tick
-  size. No searching, no indexing lag. (Verified live: detection ≤0.2s.)
-- **Open price comes from the resolution source** (Chainlink BTC/USD), via
-  Polymarket's RTDS websocket (`crypto_prices_chainlink` topic, symbol
-  `btc/usd`, 1s resolution, ~70–120s backlog per subscribe, no incremental
-  push → the client re-subscribes every 10s). Binance is only a low-latency
-  proxy: the engine anchors on the last oracle point and extrapolates with
-  Binance movement, so the ~$45 Binance↔oracle basis cancels by construction.
-- **Fees are read from the API at runtime** (`takerBaseFee`, currently
-  1000 bps = 10% × min(p, 1−p) per share) — never hardcoded.
+- **זיהוי השוק דטרמיניסטי**: `window_ts = now − (now % 300)` ←
+  slug‏ `btc-updown-5m-{window_ts}` ← Gamma מחזיר `clobTokenIds`, עמלה ו-tick.
+  בלי חיפוש, בלי תלות באינדוקס. (אומת חי: זיהוי ≤0.2 שניות.)
+- **מחיר הפתיחה מגיע ממקור ה-resolution** (Chainlink BTC/USD), דרך ה-RTDS
+  WebSocket של Polymarket (טופיק `crypto_prices_chainlink`, סימבול `btc/usd`,
+  רזולוציית שנייה, ‏backlog של ~70–120 שניות בכל subscribe, בלי push שוטף ←
+  הלקוח עושה resubscribe כל 10 שניות). Binance הוא רק פרוקסי מהיר: המנוע
+  מתעגן על נקודת האורקל האחרונה ומוסיף את תזוזת Binance מאז, כך שהבסיס
+  של ~$45 בין Binance לאורקל מתבטל מעצם הבנייה.
+- **העמלות נקראות מה-API בזמן ריצה** (`takerBaseFee`, כרגע 1000bps =
+  ‏10% × min(p, 1−p) למניה) — לעולם לא מקובעות בקוד.
 
-## Layout
+## מבנה הפרויקט
 
-| path | what |
+| נתיב | מה זה |
 |---|---|
-| `polysignal/quant.py` | fair value, EWMA vol, EV, stake ladder (pure functions) |
-| `polysignal/feeds.py` | Binance WS, RTDS oracle WS, CLOB book poller (auto-reconnect) |
-| `polysignal/engine.py` | per-window state machine (M1) |
-| `polysignal/risk.py` | money rules: gates, daily stop, cooldown, kill-switch |
-| `polysignal/store.py` | SQLite schema §4.4 + gate flags |
-| `polysignal/delivery/` | Telegram notifier + command loop, PWA server |
-| `polysignal/pwa/` | single-file phone app (served by the engine) |
-| `web/` + `netlify.toml` | standalone browser-only monitor — deployable to Netlify, no server |
-| `scripts/m0_discovery.py` | M0 spike: prove market id + book + oracle open, live |
-| `scripts/backtest.py` | M2 harness: 15.7K windows replay, grid scan, GATE 1 |
-| `scripts/gate2_check.py` | GATE 2 evaluation over the PAPER log |
-| `scripts/analyst_report.py` | daily calibration report (SQL-traceable) |
-| `reports/` | evidence: M0 log, backtest report, analyst reports |
+| `polysignal/quant.py` | ‏fair value, ‏EWMA, ‏EV, סולם הימור (פונקציות טהורות) |
+| `polysignal/feeds.py` | ‏Binance WS, אורקל RTDS, ‏poller לספרים (התאוששות אוטומטית) |
+| `polysignal/engine.py` | מכונת מצבים לכל חלון (M1) |
+| `polysignal/risk.py` | חוקי כסף: שערים, stop יומי, cooldown, מתג חירום |
+| `polysignal/store.py` | סכמת SQLite לפי סעיף 4.4 + דגלי שערים |
+| `polysignal/delivery/` | טלגרם (התראות + פקודות) ושרת ה-PWA |
+| `polysignal/pwa/` | אפליקציית הטלפון (מוגשת מהמנוע) |
+| `web/` + `netlify.toml` | מוניטור עצמאי לדפדפן — נפרס ל-Netlify, בלי שרת |
+| `scripts/m0_discovery.py` | ‏spike של M0: הוכחת זיהוי + ספר + פתיחת אורקל, חי |
+| `scripts/backtest.py` | ‏harness של M2: שחזור 15.7K חלונות, סריקת רשת, GATE 1 |
+| `scripts/gate2_check.py` | הערכת GATE 2 על לוג ה-PAPER |
+| `scripts/analyst_report.py` | דוח כיול יומי (כל מספר עם שאילתת SQL) |
+| `reports/` | ראיות: לוג M0, דוח backtest, דוח NO-GO, צילומי מסך |
 
-## Quickstart
+## התחלה מהירה
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env            # fill TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
+cp .env.example .env            # למלא TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
 
-python scripts/m0_discovery.py 30          # discovery spike (M0 evidence)
-python scripts/run_engine.py               # PAPER mode engine (M1/M4)
-python scripts/run_engine.py --with-delivery   # + Telegram + PWA on :8787
-python -m pytest tests/                    # incl. the 24h-lock risk test
+python scripts/m0_discovery.py 30          # ‏spike של M0 (ראיות)
+python scripts/run_engine.py               # מנוע במצב PAPER‏ (M1/M4)
+python scripts/run_engine.py --with-delivery   # + טלגרם + PWA על :8787
+python -m pytest tests/                    # כולל טסט נעילת ה-24 שעות
 
-# Backtest (M2): fetch datasets once, then run the grid
+# ‏Backtest‏ (M2): הורדת דאטה פעם אחת, ואז הסריקה
 python scripts/fetch_binance_1s.py 2026-03-24 2026-05-18
-python scripts/backtest.py                 # writes reports/backtest.md + GATE1 flag
-python scripts/gate2_check.py              # after >=200 paper signals / 7 days
+python scripts/backtest.py                 # כותב reports/backtest.md + דגל GATE1
+python scripts/gate2_check.py              # אחרי ≥200 איתותי paper / 7 ימים
 ```
 
-On the phone: open `http://<server>:8787`, Add to Home Screen. The card shows
-UP/DOWN/PASS, countdown, P_fair vs market, edge and stake; it turns into an
-explicit OFFLINE state if the server stops pushing (never a frozen screen).
+בטלפון: לפתוח `http://<שרת>:8787` ולהוסיף למסך הבית. הכרטיס מציג
+UP/DOWN/PASS, ספירה לאחור, P_fair מול השוק, פער והמלצת סכום; אם השרת מפסיק
+לשדר — המסך עובר למצב OFFLINE מפורש (לעולם לא מסך קפוא שנראה חי).
 
-Windows service: run `scripts/run_engine.py` via Task Scheduler / NSSM with
-auto-restart; state survives restarts (SQLite, idempotent per window).
+שירות Windows: להריץ `scripts/run_polysignal.bat` דרך Task Scheduler או NSSM
+עם הפעלה-מחדש אוטומטית; המצב שורד ריסטארטים (SQLite, כתיבה אידמפוטנטית לכל חלון).
 
-## Status vs plan (honest)
+## מצב מול התוכנית (בכנות)
 
-- **M0 ✓** — deterministic slug → market verified live; oracle open captured
-  from RTDS Chainlink feed; fee/tick/minSize read from API; basis measured.
-  Evidence: `reports/m0_discovery.log`.
-- **M1 ✓** — engine runs, logs every window/tick to SQLite, WS auto-reconnect,
-  idempotent upserts. (24h uptime soak pending on the permanent Windows box.)
-- **M2 ✓ / GATE 1: RED → NO-GO for manual LIVE** — the model is calibrated
-  (Brier 0.19) and has real edge at 0s latency (+3.8¢/share after fees), but
-  it decays ~1¢/s of execution delay: all 300 grid configs and 3 model
-  iterations are negative at 5s hand latency. Full verdict:
-  `reports/GATE1_NO_GO.md`. The only realistic path to the edge is M6 (bot),
-  a separate explicit decision.
-- **M3 ✓ code** — Telegram alert + kill-switch commands, PWA. Phone-side
-  verification (screenshot, ≤2s p95 alert) requires Daniel's device + token.
-- **M4 ready** — PAPER mode with simulated 5s hand latency is the default
-  engine mode; run 5–7 days then `gate2_check.py`.
-- **M5 locked** — LIVE display auto-refuses while gates are red (tested).
-- **M6 (auto-execution bot) is out of scope** — separate explicit decision.
+- **M0 ✓** — זיהוי דטרמיניסטי אומת חי; פתיחת האורקל נתפסת מפיד ה-Chainlink
+  של RTDS; עמלה/tick/minSize נקראים מה-API; הבסיס נמדד.
+  ראיות: `reports/m0_discovery.log`.
+- **M1 ✓** — המנוע רץ, רושם כל חלון ו-tick ל-SQLite, מתאושש מניתוקי WS,
+  כתיבה אידמפוטנטית. (ריצת יציבות של 24 שעות ממתינה למחשב הקבוע.)
+- **M2 ✓ / GATE 1: אדום ← NO-GO ל-LIVE ידני** — המודל מכויל (Brier‏ 0.19)
+  ויש אדג' אמיתי ב-latency אפס (‎+3.8¢ למניה אחרי עמלות), אבל הוא דועך
+  ‎~1¢ לכל שנייה של עיכוב ביצוע: כל 300 הקונפיגורציות ו-3 איטרציות המודל
+  שליליות עם 5 שניות של יד אנושית. פסק הדין המלא: `reports/GATE1_NO_GO.md`.
+  הנתיב הריאלי היחיד לאדג' הוא M6 (בוט) — החלטה נפרדת ומפורשת.
+- **M3 ✓ קוד** — התראות טלגרם + פקודות מתג חירום, PWA. אימות בטלפון עצמו
+  (צילום מסך, ‏p95 ≤ 2 שניות) דורש את המכשיר של דניאל + טוקן.
+- **M4 מוכן** — מצב PAPER עם ‏latency יד מדומה של 5 שניות הוא ברירת המחדל;
+  להריץ 5–7 ימים ואז `gate2_check.py`.
+- **M5 נעול** — תצוגת LIVE מסרבת אוטומטית כל עוד השערים אדומים (מכוסה בטסט).
+- **M6 (בוט ביצוע אוטומטי) מחוץ לתחולה** — החלטה מפורשת נפרדת.

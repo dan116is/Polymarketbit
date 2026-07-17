@@ -1,45 +1,46 @@
-# POLYSIGNAL — Backtest Report (M2)
+# POLYSIGNAL — דוח Backtest‏ (M2)
 
-> **GATE 1: RED — ראה** [GATE1_NO_GO.md](GATE1_NO_GO.md) **לפסק הדין המלא אחרי 3 איטרציות מודל.**
-> Iteration reports: [iter1 persistence](backtest_iter1_persist.md) · [iter2 end-game](backtest_iter2_endgame.md) · iter3 fresh-cross (backtest_iter3_results.json)
-_generated 2026-07-16 18:46:15Z — dataset kachoio/polymarket-5-minute-crypto-up-down-markets_
+> **GATE 1: אדום — ראה** [GATE1_NO_GO.md](GATE1_NO_GO.md) **לפסק הדין המלא אחרי 3 איטרציות מודל.**
+> דוחות איטרציות (נספחים טכניים): [איטרציה 1 — התמדה](backtest_iter1_persist.md) · [איטרציה 2 — סוף-חלון](backtest_iter2_endgame.md) · איטרציה 3 — חצייה טרייה (backtest_iter3_results.json)
 
-## Setup
-- Resolved BTC windows replayed: **14041** (1s top-of-book)
-- Spot proxy: Binance 1s closes (same-source open => basis cancels in ln(S/S0)); outcomes scored against true Chainlink resolutions
-- Taker fee assumed: **1000 bps** * min(p,1-p) per share (live Gamma value 2026-07; applied to the whole historical period — conservative)
-- Hand latency simulated: **5s** (signal -> executed ask)
-- Train/test: time split at `1777731300` (2026-05-02 14:15:00+00:00) — config chosen on train, GATE 1 judged on test only
-- Grid size: 300 configs
+_הופק 2026-07-16 18:46:15Z — דאטהסט kachoio/polymarket-5-minute-crypto-up-down-markets_
 
-## Chosen config (by train EV)
-- sigma half-life: **30s**, theta: **4c**, buffer: **2c**, band: **15-90s** before close
+## מערך הבדיקה
+- חלונות BTC פתורים ששוחזרו: **14,041** (ספר פקודות ברזולוציית שנייה)
+- ספוט: נרות שנייה של Binance כ-proxy (פתיחה מאותו מקור ⇒ הבסיס מתבטל ב-ln(S/S₀)); התוצאות נשפטות מול ה-resolution האמיתי של Chainlink
+- עמלת taker שהונחה: **1000bps** × min(p,1−p) למניה (הערך החי מ-Gamma‏ 2026-07; הוחלה על כל התקופה ההיסטורית — הנחה שמרנית)
+- ‏latency יד מדומה: **5 שניות** (מהאיתות עד ה-ask שבוצע)
+- ‏train/test: חלוקת זמן ב-`1777731300` ‏(2026-05-02 14:15 UTC) — הקונפיגורציה נבחרת על train, ‏GATE 1 נשפט על test בלבד
+- גודל הסריקה: 300 קונפיגורציות
 
-| set | signals | EV c/share | hit rate | Brier | mean ask | slip c |
+## הקונפיגורציה שנבחרה (לפי EV על train)
+- ‏half-life של σ: **30s**, ‏θ: **4¢**, ‏buffer: **2¢**, חלון איתות: **15–90s** לפני הסגירה
+
+| סט | איתותים | EV ‏¢/מניה | פגיעה | Brier | ask ממוצע | סליפ ¢ |
 |---|---|---|---|---|---|---|
-| train | 7192 | -0.98 | 0.665 | 0.177 | 0.651 | +3.15 |
-| test | 2936 | -2.17 | 0.625 | 0.186 | 0.624 | +2.90 |
+| train | 7192 | ‎−0.98 | 0.665 | 0.177 | 0.651 | ‎+3.15 |
+| test | 2936 | ‎−2.17 | 0.625 | 0.186 | 0.624 | ‎+2.90 |
 
-Full-period signals at 5s latency: **10128**
+איתותים בכל התקופה ב-latency‏ 5s: **10,128**
 
-## Latency sensitivity (test set)
-| latency | signals | EV c/share | hit rate | Brier |
+## רגישות ל-latency (סט הטסט)
+| latency | איתותים | EV ‏¢/מניה | פגיעה | Brier |
 |---|---|---|---|---|
-| 0s | 2945 | +0.68 | 0.626 | 0.185 |
-| 2s | 2942 | -1.10 | 0.626 | 0.185 |
-| 5s | 2936 | -2.17 | 0.625 | 0.186 |
-| 10s | 2919 | -2.47 | 0.623 | 0.187 |
+| 0s | 2945 | ‎+0.68 | 0.626 | 0.185 |
+| 2s | 2942 | ‎−1.10 | 0.626 | 0.185 |
+| 5s | 2936 | ‎−2.17 | 0.625 | 0.186 |
+| 10s | 2919 | ‎−2.47 | 0.623 | 0.187 |
 
-## By time-remaining at signal (test, 5s latency)
-| tau bucket | signals | EV c/share | hit rate | Brier |
+## לפי זמן שנותר ברגע האיתות (טסט, ‏latency‏ 5s)
+| טווח τ | איתותים | EV ‏¢/מניה | פגיעה | Brier |
 |---|---|---|---|---|
-| 15-30s | 35 | +5.38 | 0.686 | 0.079 |
-| 30-60s | 194 | -2.19 | 0.562 | 0.174 |
-| 60-90s | 1057 | -1.82 | 0.613 | 0.149 |
-| 90-120s | 1650 | -2.56 | 0.639 | 0.213 |
+| 15–30s | 35 | ‎+5.38 | 0.686 | 0.079 |
+| 30–60s | 194 | ‎−2.19 | 0.562 | 0.174 |
+| 60–90s | 1057 | ‎−1.82 | 0.613 | 0.149 |
+| 90–120s | 1650 | ‎−2.56 | 0.639 | 0.213 |
 
-## GATE 1 verdict
-- EV/signal (test, 5s latency) >= +2c: see table
-- **GATE 1: RED**
+## פסק דין GATE 1
+- ‏EV לאיתות (טסט, ‏5s) ≥ ‎+2¢ → לא עומד (ראה טבלה)
+- **GATE 1: אדום**
 
-_Numbers trace to reports/backtest_results.json; raw signal frames reproducible via `python scripts/backtest.py`._
+_כל מספר ניתן למעקב ב-reports/backtest_results.json; שחזור מלא: `python scripts/backtest.py`._

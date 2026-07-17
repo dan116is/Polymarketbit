@@ -1,5 +1,5 @@
 {
-  "_comment": "PROVISIONAL thresholds. theta/buffer/time band/sigma half-life are FINALIZED BY BACKTEST (M2), not here. Daily stop editable only by Daniel.",
+  "_comment": "ספים זמניים. theta/buffer/חלון הזמן/half-life נקבעים סופית ב-backtest (M2), לא כאן. את תקרת ההפסד היומית משנה רק דניאל ידנית.",
   "model": {
     "theta_cents": 6.0,
     "buffer_cents": 2.0,

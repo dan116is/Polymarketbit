@@ -38,7 +38,7 @@ def main():
         "SELECT COUNT(*) FROM events WHERE kind='RISK_VIOLATION'").fetchone()[0]
 
     if n == 0:
-        print("GATE 2: no PAPER signals logged yet — RED")
+        print("GATE 2: עדיין אין איתותי PAPER בלוג — אדום")
         _write(False, {"n": 0})
         return
 
@@ -62,7 +62,7 @@ def main():
            "calib_gap": round(calib_gap, 4), "risk_violations": violations}
     green = (n >= MIN_SIGNALS and ev_c >= MIN_EV_CENTS
              and calib_gap <= MAX_CALIB_GAP and violations == 0)
-    print(f"GATE 2 {'GREEN' if green else 'RED'}: {res}")
+    print(f"GATE 2 {'ירוק' if green else 'אדום'}: {res}")
     _write(green, res)
 
 

@@ -322,62 +322,62 @@ def main():
 def write_markdown(rep: dict):
     b = rep.get("best")
     lines = [
-        "# POLYSIGNAL — Backtest Report (M2)",
-        f"_generated {rep['generated_utc']} — dataset kachoio/polymarket-5-minute-crypto-up-down-markets_",
+        "# POLYSIGNAL — דוח Backtest‏ (M2)",
+        f"_הופק {rep['generated_utc']} — דאטהסט kachoio/polymarket-5-minute-crypto-up-down-markets_",
         "",
-        "## Setup",
-        f"- Resolved BTC windows replayed: **{rep['n_windows']}** (1s top-of-book)",
-        f"- Spot proxy: Binance 1s closes (same-source open => basis cancels in ln(S/S0));"
-        f" outcomes scored against true Chainlink resolutions",
-        f"- Taker fee assumed: **{rep['fee_bps_assumed']:.0f} bps** * min(p,1-p) per share"
-        " (live Gamma value 2026-07; applied to the whole historical period — conservative)",
-        f"- Hand latency simulated: **{rep['hand_latency_s']}s** (signal -> executed ask)",
-        f"- Model iteration filters: persist={rep.get('persist_s', 0)}s, "
-        f"stale_book={rep.get('stale_book_s', 0)}s",
-        f"- Train/test: time split at `{rep['split_ts']}`"
-        f" ({pd.Timestamp(rep['split_ts'], unit='s', tz='UTC')}) — config chosen on train,"
-        " GATE 1 judged on test only",
-        f"- Grid size: {rep['grid_size']} configs",
+        "## מערך הבדיקה",
+        f"- חלונות BTC פתורים ששוחזרו: **{rep['n_windows']}** (ספר ברזולוציית שנייה)",
+        "- ספוט: נרות שנייה של Binance כ-proxy (פתיחה מאותו מקור ⇒ הבסיס מתבטל"
+        " ב-ln(S/S₀)); התוצאות נשפטות מול ה-resolution האמיתי של Chainlink",
+        f"- עמלת taker שהונחה: **{rep['fee_bps_assumed']:.0f}bps** × min(p,1−p) למניה"
+        " (הערך החי מ-Gamma; הוחלה על כל התקופה — הנחה שמרנית)",
+        f"- ‏latency יד מדומה: **{rep['hand_latency_s']} שניות** (מהאיתות עד ה-ask שבוצע)",
+        f"- פילטרים של איטרציות מודל: התמדה={rep.get('persist_s', 0)}s, "
+        f"ספר-קפוא={rep.get('stale_book_s', 0)}s",
+        f"- ‏train/test: חלוקת זמן ב-`{rep['split_ts']}`"
+        f" ({pd.Timestamp(rep['split_ts'], unit='s', tz='UTC')}) — הקונפיגורציה נבחרת"
+        " על train, ‏GATE 1 נשפט על test בלבד",
+        f"- גודל הסריקה: {rep['grid_size']} קונפיגורציות",
         "",
     ]
     if b is None:
-        lines += ["## Result: NO SIGNALS — NO-GO", ""]
+        lines += ["## תוצאה: אפס איתותים — NO-GO", ""]
     else:
         tr, te = b["train"], b["test"]
         lines += [
-            "## Chosen config (by train EV)",
-            f"- sigma half-life: **{b['halflife']}s**, theta: **{b['theta']*100:.0f}c**, "
-            f"buffer: **{b['buffer']*100:.0f}c**, band: **{b['band']}s** before close",
+            "## הקונפיגורציה שנבחרה (לפי EV על train)",
+            f"- ‏half-life של σ: **{b['halflife']}s**, ‏θ: **{b['theta']*100:.0f}¢**, "
+            f"‏buffer: **{b['buffer']*100:.0f}¢**, חלון איתות: **{b['band']}s** לפני הסגירה",
             "",
-            "| set | signals | EV c/share | hit rate | Brier | mean ask | slip c |",
+            "| סט | איתותים | EV ‏¢/מניה | פגיעה | Brier | ask ממוצע | סליפ ¢ |",
             "|---|---|---|---|---|---|---|",
             f"| train | {tr.get('n',0)} | {tr.get('ev_cents',0):+.2f} | {tr.get('hit_rate',0):.3f} "
             f"| {tr.get('brier',0):.3f} | {tr.get('mean_ask',0):.3f} | {tr.get('slip_cents',0):+.2f} |",
             f"| test | {te.get('n',0)} | {te.get('ev_cents',0):+.2f} | {te.get('hit_rate',0):.3f} "
             f"| {te.get('brier',0):.3f} | {te.get('mean_ask',0):.3f} | {te.get('slip_cents',0):+.2f} |",
             "",
-            f"Full-period signals at 5s latency: **{rep.get('full_period_n', 0)}**",
+            f"איתותים בכל התקופה ב-latency‏ 5s: **{rep.get('full_period_n', 0)}**",
             "",
-            "## Latency sensitivity (test set)",
-            "| latency | signals | EV c/share | hit rate | Brier |",
+            "## רגישות ל-latency (סט הטסט)",
+            "| latency | איתותים | EV ‏¢/מניה | פגיעה | Brier |",
             "|---|---|---|---|---|",
         ]
         for lat, m in rep.get("latency_curve_test", {}).items():
             lines.append(f"| {lat}s | {m.get('n',0)} | {m.get('ev_cents',0):+.2f} "
                          f"| {m.get('hit_rate',0):.3f} | {m.get('brier',0):.3f} |")
-        lines += ["", "## By time-remaining at signal (test, 5s latency)",
-                  "| tau bucket | signals | EV c/share | hit rate | Brier |",
+        lines += ["", "## לפי זמן שנותר ברגע האיתות (טסט, ‏latency‏ 5s)",
+                  "| טווח τ | איתותים | EV ‏¢/מניה | פגיעה | Brier |",
                   "|---|---|---|---|---|"]
         for k, m in rep.get("tau_buckets_test", {}).items():
             lines.append(f"| {k} | {m.get('n',0)} | {m.get('ev_cents',0):+.2f} "
                          f"| {m.get('hit_rate',0):.3f} | {m.get('brier',0):.3f} |")
     lines += [
         "",
-        "## GATE 1 verdict",
-        f"- EV/signal (test, 5s latency) >= +2c: {'PASS' if rep.get('gate1_green') else 'see table'}",
-        f"- **GATE 1: {'GREEN' if rep.get('gate1_green') else 'RED'}**",
+        "## פסק דין GATE 1",
+        f"- ‏EV לאיתות (טסט, ‏5s) ≥ ‎+2¢: {'עומד ✓' if rep.get('gate1_green') else 'לא עומד — ראה טבלה'}",
+        f"- **GATE 1: {'ירוק' if rep.get('gate1_green') else 'אדום'}**",
         "",
-        "_Numbers trace to reports/backtest_results.json; raw signal frames reproducible via"
+        "_כל מספר ניתן למעקב ב-reports/backtest_results.json; שחזור מלא:"
         " `python scripts/backtest.py`._",
     ]
     with open("reports/backtest.md", "w") as f:

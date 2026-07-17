@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
@@ -14,48 +14,57 @@
   body { background:var(--bg); color:var(--fg); font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
          min-height:100vh; display:flex; flex-direction:column; align-items:center;
          padding:12px; gap:12px; }
-  #mode { font-size:13px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; }
+  #mode { font-size:13px; letter-spacing:1px; color:var(--dim); }
   #mode.live { color:var(--up); font-weight:700; }
   #card { width:100%; max-width:430px; background:var(--pass); border-radius:24px;
           padding:34px 20px; text-align:center; transition:background .3s; }
   #card.up { background:var(--up); color:#04321f; }
   #card.down { background:var(--down); color:#3d0509; }
   #card.dead { background:#20242e; color:var(--dim); }
-  #side { font-size:64px; font-weight:800; letter-spacing:4px; }
+  #side { font-size:64px; font-weight:800; letter-spacing:4px; direction:ltr; }
   #stake { font-size:30px; font-weight:700; margin-top:2px; min-height:38px; }
-  #reason { font-size:13px; opacity:.75; margin-top:6px; }
-  #count { font-size:46px; font-variant-numeric:tabular-nums; font-weight:600; }
+  #reason { font-size:13px; opacity:.8; margin-top:6px; }
+  #count { font-size:46px; font-variant-numeric:tabular-nums; font-weight:600; direction:ltr; }
   #countlbl { font-size:12px; color:var(--dim); letter-spacing:1px; }
   .grid { width:100%; max-width:430px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .cell { background:var(--card); border-radius:14px; padding:12px 14px; }
-  .cell .l { font-size:11px; color:var(--dim); letter-spacing:1px; text-transform:uppercase; }
-  .cell .v { font-size:20px; font-variant-numeric:tabular-nums; margin-top:3px; }
+  .cell .l { font-size:11px; color:var(--dim); letter-spacing:.5px; }
+  .cell .v { font-size:20px; font-variant-numeric:tabular-nums; margin-top:3px; direction:ltr; text-align:left; }
   #feeds { font-size:12px; color:var(--dim); }
   .dot { display:inline-block; width:8px; height:8px; border-radius:4px; margin:0 3px 0 10px; }
   .ok { background:var(--up); } .bad { background:var(--down); }
 </style>
 </head>
 <body>
-  <div id="mode">connecting…</div>
+  <div id="mode">מתחבר…</div>
   <div id="card" class="dead">
     <div id="side">—</div>
     <div id="stake"></div>
-    <div id="reason">waiting for server</div>
+    <div id="reason">ממתין לשרת</div>
   </div>
   <div style="text-align:center">
     <div id="count">–:––</div>
-    <div id="countlbl">TO WINDOW CLOSE</div>
+    <div id="countlbl">לסגירת החלון</div>
   </div>
   <div class="grid">
-    <div class="cell"><div class="l">P fair (up)</div><div class="v" id="pfair">–</div></div>
+    <div class="cell"><div class="l">P fair (עלייה)</div><div class="v" id="pfair">–</div></div>
     <div class="cell"><div class="l">Edge</div><div class="v" id="edge">–</div></div>
-    <div class="cell"><div class="l">Ask up / down</div><div class="v" id="asks">– / –</div></div>
-    <div class="cell"><div class="l">Spot vs open</div><div class="v" id="spot">–</div></div>
+    <div class="cell"><div class="l">Ask ‏Up / Down</div><div class="v" id="asks">– / –</div></div>
+    <div class="cell"><div class="l">ספוט / פתיחה</div><div class="v" id="spot">–</div></div>
   </div>
   <div id="feeds"></div>
 <script>
 const $ = id => document.getElementById(id);
 let last = null, lastMsgAt = 0;
+
+const REASONS = {
+  warming_up: "חימום — אוסף נתונים",
+  outside_time_band: "מחוץ לחלון האיתות (15–120s)",
+  edge_below_theta: "אין פער מעל הסף",
+  no_quotes: "אין ציטוטים בספר",
+  insufficient_depth: "אין עומק מספיק בספר",
+  edge_above_theta: "פער מעל הסף",
+};
 
 function fmtCount(s) {
   if (s == null || s < 0) return "–:––";
@@ -65,23 +74,24 @@ function fmtCount(s) {
 
 function render() {
   const stale = Date.now() - lastMsgAt > 5000;
-  if (stale || !last) {                       // server-down state: explicit, not frozen
+  if (stale || !last) {                       // מצב שרת-נפל: מפורש, לא מסך קפוא
     $("card").className = "dead";
     $("side").textContent = "OFFLINE";
     $("stake").textContent = "";
-    $("reason").textContent = "no data from server — do not trade on this screen";
-    $("mode").textContent = "disconnected";
+    $("reason").textContent = "אין נתונים מהשרת — לא לסחור לפי המסך הזה";
+    $("mode").textContent = "מנותק";
     return;
   }
-  const p = last, sig = p.signal || {side: "PASS", stake: 0, reason: "no signal"};
-  $("mode").textContent = p.mode + (p.warmup ? " · warmup" : "") +
+  const p = last, sig = p.signal || {side: "PASS", stake: 0, reason: "warming_up"};
+  $("mode").textContent = p.mode + (p.warmup ? " · חימום" : "") +
       (p.gate1 ? " · G1✓" : " · G1✗") + (p.gate2 ? " G2✓" : " G2✗");
   $("mode").className = p.mode === "LIVE" ? "live" : "";
   const side = sig.side || "PASS";
   $("card").className = side === "UP" ? "up" : side === "DOWN" ? "down" : "";
   $("side").textContent = side;
   $("stake").textContent = side === "PASS" ? "" : "$" + (sig.stake || 0).toFixed(0);
-  $("reason").textContent = (sig.locked ? "🔒 " : "") + (sig.reason || "");
+  $("reason").textContent = (sig.locked ? "🔒 " : "") +
+      (REASONS[sig.reason] || sig.reason || "");
   $("pfair").textContent = sig.p_fair == null ? "–" : sig.p_fair.toFixed(3);
   $("edge").textContent = (sig.edge * 100).toFixed(1) + "¢";
   $("asks").textContent = (p.ask_up ?? "–") + " / " + (p.ask_down ?? "–");
