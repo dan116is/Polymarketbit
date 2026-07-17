@@ -75,6 +75,7 @@ class Engine:
         self._stop = asyncio.Event()
         self._last_vol_sample = 0.0
         self._last_heartbeat = 0.0
+        self._last_tick_log = 0.0
         self._feed_down_since: dict[str, float] = {}
         self._feed_alerted: set[str] = set()
         self._last_feed_alert: dict[str, float] = {}
@@ -164,7 +165,25 @@ class Engine:
                  "detect_latency_s": round(time.time() - win, 3),
                  "fee_bps": st.market.taker_base_fee_bps}))
             self._start_clob_ws(st)
+        if self.live_executor is not None:
+            self._spawn(self._warm_clob(st))
         return st
+
+    async def _warm_clob(self, st: WindowState) -> None:
+        """Keep the order-POST connection pool warm through the action band.
+        httpx drops idle connections after 5s; a cold TLS handshake costs
+        650-950ms — most of the edge at the measured ~1c/s decay."""
+        win_end = st.window_ts + self.cfg["runtime"]["window_seconds"]
+        band = self.cfg["model"]["signal_band_s"]
+        while not self._stop.is_set():
+            tau = win_end - time.time()
+            if tau < band[0] - 5:
+                return
+            if tau <= band[1] + 10:
+                await self.live_executor.keep_warm()
+                await asyncio.sleep(3.0)
+            else:
+                await asyncio.sleep(min(tau - band[1] - 8, 30.0))
 
     def _start_clob_ws(self, st: WindowState) -> None:
         """Real-time books via the official market channel; runs 150s past
@@ -561,21 +580,32 @@ class Engine:
                         await self._fire_signal(st, sig, now)
                     elif sig and sig.side != "PASS" and not verdict.allowed:
                         self.store.log_event("SIGNAL_BLOCKED", verdict.reason)
-                self.store.log_tick(
-                    ts=now, window_ts=win,
-                    s_binance=self.binance.price,
-                    s_oracle=self.oracle.latest,
-                    basis=(self.binance.price - self.oracle.latest
-                           if self.binance.price and self.oracle.latest else None),
-                    ask_up=up[1] if up else None, ask_down=down[1] if down else None,
-                    p_fair=sig.p_fair if sig else None,
-                    sigma_1s=self.vol.sigma_1s if self.vol.ready() else None)
-                for hook in self.status_hooks:
-                    try:
-                        await hook(self.status_payload())
-                    except Exception as e:
-                        log.warning("status hook failed: %r", e)
-                await asyncio.sleep(max(0.0, 1.0 - (time.time() - now)))
+                # tick log + status stay at 1 Hz even when the decision loop
+                # runs faster inside the band — the DB and PWA don't need 5 Hz
+                if now - self._last_tick_log >= 0.95:
+                    self._last_tick_log = now
+                    self.store.log_tick(
+                        ts=now, window_ts=win,
+                        s_binance=self.binance.price,
+                        s_oracle=self.oracle.latest,
+                        basis=(self.binance.price - self.oracle.latest
+                               if self.binance.price and self.oracle.latest else None),
+                        ask_up=up[1] if up else None, ask_down=down[1] if down else None,
+                        p_fair=sig.p_fair if sig else None,
+                        sigma_1s=self.vol.sigma_1s if self.vol.ready() else None)
+                    for hook in self.status_hooks:
+                        try:
+                            await hook(self.status_payload())
+                        except Exception as e:
+                            log.warning("status hook failed: %r", e)
+                # decision cadence: 5 Hz while inside the action band and no
+                # signal is locked — detection delay is pure edge decay at the
+                # measured ~1c/s, so waiting a full second costs real cents
+                tau = win + self.cfg["runtime"]["window_seconds"] - time.time()
+                band = self.cfg["model"]["signal_band_s"]
+                fast = (not st.signaled) and (band[0] - 2) <= tau <= (band[1] + 2)
+                await asyncio.sleep(max(0.0, (0.2 if fast else 1.0)
+                                        - (time.time() - now)))
         finally:
             # let in-flight window-close/exec-sample tasks finish BEFORE the
             # caller closes the store — otherwise a stop near a boundary loses

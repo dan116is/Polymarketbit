@@ -119,6 +119,18 @@ class LiveExecutor:
         self.cfg = cfg
         self._client = None
 
+    async def keep_warm(self) -> None:
+        """One cheap GET on the SAME httpx pool post_order uses. Measured
+        2026-07-17: a cold connection costs 650-950ms vs ~150ms warm, and
+        httpx's default keepalive expiry is 5s — so the engine pings every
+        ~3s inside the action band, or every live order pays cold TLS."""
+        try:
+            from py_clob_client.http_helpers.helpers import _http_client
+            await asyncio.to_thread(
+                _http_client.get, "https://clob.polymarket.com/ok")
+        except Exception:
+            pass  # warmth is best-effort; never let it disturb the engine
+
     def refusal(self, mode: str) -> str | None:
         """Why a live order may NOT be sent right now; None = all clear."""
         m6 = self.cfg.get("m6", {})
