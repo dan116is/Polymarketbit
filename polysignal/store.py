@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS windows (
     s_open          REAL,
     source_open     TEXT,
     s_close         REAL,
-    outcome         TEXT CHECK (outcome IN ('UP','DOWN',NULL)),
+    outcome         TEXT CHECK (outcome IS NULL OR outcome IN ('UP','DOWN')),
     p_fair_signal   REAL,
     ask_up          REAL,
     ask_down        REAL,
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS windows (
     bid_down        REAL,
     fee             REAL,
     edge            REAL,
-    signal          TEXT CHECK (signal IN ('UP','DOWN','PASS',NULL)),
+    signal          TEXT CHECK (signal IS NULL OR signal IN ('UP','DOWN','PASS')),
     stake_reco      REAL,
     t_remaining_sig REAL,
     latency_ms      REAL,
@@ -70,7 +70,22 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events (kind, ts);
 CREATE INDEX IF NOT EXISTS idx_windows_mode ON windows (mode, window_ts);
+
+-- edge-decay evidence: the taken side's top-of-book at fixed offsets after
+-- each signal. This is the number a future M6 decision hinges on.
+CREATE TABLE IF NOT EXISTS exec_samples (
+    window_ts INTEGER NOT NULL,
+    mode      TEXT    NOT NULL,
+    dt_s      REAL    NOT NULL,
+    bid       REAL,
+    ask       REAL,
+    bid_depth REAL,
+    ask_depth REAL,
+    PRIMARY KEY (window_ts, mode, dt_s)
+);
 """
+
+TICKS_RETENTION_S = 14 * 86400
 
 
 class Store:
@@ -78,8 +93,15 @@ class Store:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.path))
+        self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
+        # analyst/gate scripts read the same DB from other processes while the
+        # engine commits at 1Hz — don't fail on a momentary write lock
+        self.conn.execute("PRAGMA busy_timeout=5000")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
+        self.conn.execute("DELETE FROM ticks WHERE ts < ?",
+                          (time.time() - TICKS_RETENTION_S,))
         self.conn.commit()
 
     # ---- windows ----------------------------------------------------------
@@ -94,6 +116,20 @@ class Store:
             f"ON CONFLICT (window_ts, mode) DO UPDATE SET {updates}, updated_at=excluded.updated_at",
             (window_ts, mode, *fields.values(), now, now),
         )
+        self.conn.commit()
+
+    def get_window(self, window_ts: int, mode: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM windows WHERE window_ts=? AND mode=?",
+            (window_ts, mode)).fetchone()
+        return dict(row) if row else None
+
+    def log_exec_sample(self, window_ts: int, mode: str, dt_s: float,
+                        bid: float | None, ask: float | None,
+                        bid_depth: float | None, ask_depth: float | None) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO exec_samples VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (window_ts, mode, dt_s, bid, ask, bid_depth, ask_depth))
         self.conn.commit()
 
     def window_count(self, mode: str | None = None) -> int:

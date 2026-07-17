@@ -52,7 +52,7 @@ class BinanceSpot:
         self._host_i += 1
         async with websockets.connect(url, open_timeout=10, ping_interval=20) as ws:
             log.info("binance connected: %s", url)
-            self._host_i -= 1  # success: stay on this host next time
+            got_data = False
             while True:
                 # stall watchdog: BTCUSDT never goes 30s without a trade; a
                 # silent-but-open socket must be treated as dead
@@ -61,6 +61,11 @@ class BinanceSpot:
                 except asyncio.TimeoutError:
                     raise ConnectionError("binance stall: no trade for 30s")
                 d = json.loads(msg)
+                if not got_data:
+                    # only a host that actually DELIVERS counts as good — a
+                    # handshake-only host must not stop the rotation
+                    got_data = True
+                    self._host_i -= 1
                 p = float(d["p"])
                 ts = d["T"] / 1000.0
                 self.price, self.ts = p, ts
@@ -135,7 +140,13 @@ class OracleFeed:
             log.info("oracle RTDS connected")
             await ws.send(sub)
             last_sub = time.time()
+            conn_started = time.time()
             while not self.stop.is_set():
+                # stall watchdog FIRST, so it also runs on the recv-timeout and
+                # ping paths (an open-but-silent subscription is dead) and on a
+                # connection that never delivered a single point
+                if time.time() - max(self.latest_ts, conn_started) > 60:
+                    raise ConnectionError("oracle stall: no new point for 60s")
                 try:
                     msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
                 except asyncio.TimeoutError:
@@ -158,10 +169,6 @@ class OracleFeed:
                 if time.time() - last_sub >= self.resubscribe_s:
                     await ws.send(sub)
                     last_sub = time.time()
-                # stall watchdog: resubscribes should refresh the backlog every
-                # ~10s; a minute with no new point means the stream is dead
-                if self.latest_ts and time.time() - self.latest_ts > 60:
-                    raise ConnectionError("oracle stall: no new point for 60s")
 
     async def run(self):
         await _reconnect_loop("oracle", self._connect_once, self.stop)

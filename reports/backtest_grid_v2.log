@@ -1,0 +1,37 @@
+loading data...
+14040 windows, 4211918 ticks (14s)
+train/test split at window_ts=1777731600 (2026-05-02 14:20:00+00:00)
+hl=30 th=0.04 buf=0.01 band=(15, 120): train n=8317 ev=-1.34c | test n=3435 ev=-1.91c
+hl=30 th=0.04 buf=0.01 band=(15, 90): train n=7393 ev=-1.32c | test n=3034 ev=-2.65c
+hl=30 th=0.04 buf=0.01 band=(30, 120): train n=8277 ev=-1.34c | test n=3416 ev=-1.90c
+hl=30 th=0.04 buf=0.01 band=(20, 60): train n=6154 ev=-1.19c | test n=2452 ev=-2.83c
+hl=30 th=0.04 buf=0.01 band=(15, 60): train n=6204 ev=-1.17c | test n=2477 ev=-2.75c
+hl=30 th=0.04 buf=0.02 band=(15, 120): train n=7892 ev=-1.04c | test n=3293 ev=-1.68c
+hl=30 th=0.04 buf=0.02 band=(15, 90): train n=6945 ev=-1.08c | test n=2873 ev=-2.26c
+hl=30 th=0.04 buf=0.02 band=(30, 120): train n=7826 ev=-1.00c | test n=3263 ev=-1.67c
+hl=30 th=0.04 buf=0.02 band=(20, 60): train n=5725 ev=-1.27c | test n=2305 ev=-2.67c
+hl=30 th=0.04 buf=0.02 band=(15, 60): train n=5777 ev=-1.27c | test n=2337 ev=-2.60c
+hl=30 th=0.04 buf=0.03 band=(15, 120): train n=7459 ev=-0.92c | test n=3161 ev=-1.58c
+hl=30 th=0.04 buf=0.03 band=(15, 90): train n=6521 ev=-1.19c | test n=2745 ev=-2.40c
+hl=30 th=0.04 buf=0.03 band=(30, 120): train n=7370 ev=-0.87c | test n=3122 ev=-1.62c
+hl=30 th=0.04 buf=0.03 band=(20, 60): train n=5327 ev=-1.29c | test n=2184 ev=-2.89c
+hl=30 th=0.04 buf=0.03 band=(15, 60): train n=5398 ev=-1.33c | test n=2213 ev=-2.79c
+hl=30 th=0.05 buf=0.01 band=(15, 120): train n=7892 ev=-1.04c | test n=3293 ev=-1.68c
+hl=30 th=0.05 buf=0.01 band=(15, 90): train n=6945 ev=-1.08c | test n=2873 ev=-2.26c
+hl=30 th=0.05 buf=0.01 band=(30, 120): train n=7826 ev=-1.00c | test n=3263 ev=-1.67c
+hl=30 th=0.05 buf=0.01 band=(20, 60): train n=5725 ev=-1.27c | test n=2305 ev=-2.67c
+hl=30 th=0.05 buf=0.01 band=(15, 60): train n=5777 ev=-1.27c | test n=2337 ev=-2.60c
+hl=30 th=0.05 buf=0.02 band=(15, 120): train n=7459 ev=-0.92c | test n=3161 ev=-1.58c
+hl=30 th=0.05 buf=0.02 band=(15, 90): train n=6521 ev=-1.19c | test n=2745 ev=-2.40c
+hl=30 th=0.05 buf=0.02 band=(30, 120): train n=7370 ev=-0.87c | test n=3122 ev=-1.62c
+hl=30 th=0.05 buf=0.02 band=(20, 60): train n=5327 ev=-1.29c | test n=2184 ev=-2.89c
+hl=30 th=0.05 buf=0.02 band=(15, 60): train n=5398 ev=-1.33c | test n=2213 ev=-2.79c
+hl=30 th=0.05 buf=0.03 band=(15, 120): train n=7071 ev=-0.89c | test n=3013 ev=-1.68c
+hl=30 th=0.05 buf=0.03 band=(15, 90): train n=6109 ev=-1.32c | test n=2593 ev=-2.15c
+hl=30 th=0.05 buf=0.03 band=(30, 120): train n=6954 ev=-0.85c | test n=2971 ev=-1.62c
+hl=30 th=0.05 buf=0.03 band=(20, 60): train n=4948 ev=-1.30c | test n=2040 ev=-3.09c
+hl=30 th=0.05 buf=0.03 band=(15, 60): train n=5025 ev=-1.38c | test n=2070 ev=-3.03c
+hl=30 th=0.06 buf=0.01 band=(15, 120): train n=7459 ev=-0.92c | test n=3161 ev=-1.58c
+hl=30 th=0.06 buf=0.01 band=(15, 90): train n=6521 ev=-1.19c | test n=2745 ev=-2.40c
+hl=30 th=0.06 buf=0.01 band=(30, 120): train n=7370 ev=-0.87c | test n=3122 ev=-1.62c
+hl=30 th=0.06 buf=0.01 band=(20, 60): train n=5327 ev=-1.29c | test n=2184 ev=-2.89c

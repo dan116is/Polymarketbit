@@ -37,6 +37,11 @@ async def main():
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     cfg = json.load(open(args.config))
     store = Store(cfg["runtime"]["db_path"])
+    if args.mode == "LIVE" and not (store.gate_green("GATE1") and store.gate_green("GATE2")):
+        print("LIVE מסורב: שני השערים חייבים להיות ירוקים במסד הנתונים. "
+              "אין override. ראה reports/GATE1_NO_GO.md")
+        store.close()
+        sys.exit(2)
     engine = Engine(cfg, store, mode=args.mode)
 
     if args.with_delivery:
@@ -60,14 +65,17 @@ async def main():
                 loop.add_signal_handler(getattr(signal, sig_name), engine.stop)
 
     store.log_event("ENGINE_START", json.dumps({"mode": args.mode}))
+    stopper_task = None
     if args.minutes > 0:
         async def stopper():
             await asyncio.sleep(args.minutes * 60)
             engine.stop()
-        asyncio.get_running_loop().create_task(stopper())
+        stopper_task = asyncio.get_running_loop().create_task(stopper())
     try:
         await engine.run()
     finally:
+        if stopper_task:
+            stopper_task.cancel()
         store.log_event("ENGINE_STOP", "")
         store.close()
 

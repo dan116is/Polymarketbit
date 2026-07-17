@@ -56,6 +56,10 @@ def load_data() -> pd.DataFrame:
     tk = pd.read_parquet("data/hf/btc_ticks.parquet",
                          columns=["condition_id", "t", "au", "ad", "sau", "sad"])
     bn = pd.read_parquet("data/binance_1s.parquet")
+    # the archive keys each 1s kline's CLOSE by its OPEN time — using it as-is
+    # gives the model a price up to 1s from the future. Shift so the price
+    # available at second t is the close of the bar that ENDED at t.
+    bn = bn.assign(ts=bn.ts + 1)
 
     df = tk.merge(mk[["condition_id", "window_ts", "win_up"]],
                   on="condition_id", how="inner")
@@ -285,28 +289,52 @@ def main():
                 df.groupby("condition_id").window_ts.first() >= split_ts)]) \
                 if not sig.empty else {"n": 0}
             lat_curve[lat] = m_test
-        # tau buckets at hand latency (test set)
+        # tau buckets at hand latency (test set) — edges derived from the band,
+        # last bucket closed so the tau==band-max spike isn't silently dropped
         sig = simulate(df, p_fair, theta=theta, buffer=buf, band=band,
                        latency_s=HAND_LATENCY, group_first=group_first,
                        persist_s=args.persist, stale_book_s=args.stale_book)
         sig_te = sig[sig.condition_id.map(
-            df.groupby("condition_id").window_ts.first() >= split_ts)]
-        for lo, hi in [(15, 30), (30, 60), (60, 90), (90, 120)]:
-            b = sig_te[(sig_te.tau >= lo) & (sig_te.tau < hi)]
-            tau_buckets[f"{lo}-{hi}s"] = metrics(b)
+            df.groupby("condition_id").window_ts.first() >= split_ts)] \
+            if not sig.empty else sig
+        edges = np.linspace(band[0], band[1], 5)
+        covered = 0
+        for i in range(4):
+            a, b_ = edges[i], edges[i + 1]
+            m = (sig_te.tau >= a) & ((sig_te.tau <= b_) if i == 3 else (sig_te.tau < b_))
+            tau_buckets[f"{a:.0f}-{b_:.0f}s"] = metrics(sig_te[m])
+            covered += int(m.sum())
+        assert covered == len(sig_te), "tau buckets must cover every signal"
+        # honesty stats: iid bootstrap 95% CI on the decisive test EV
+        rng = np.random.default_rng(42)
+        if len(sig_te):
+            pnl = sig_te.pnl_share.to_numpy()
+            boots = np.array([rng.choice(pnl, len(pnl), replace=True).mean()
+                              for _ in range(1000)]) * 100
+            report["test_ev_ci95_cents"] = [round(float(np.percentile(boots, 2.5)), 2),
+                                            round(float(np.percentile(boots, 97.5)), 2)]
+        full_n = int(metrics(sig)["n"]) if not sig.empty else 0
         te = lat_curve[HAND_LATENCY]
         te10 = lat_curve[GATE1["fragility_latency_s"]]
         gate1_green = (
-            te.get("n", 0) >= GATE1["min_signals"] * 0.3  # test = 30% of period
+            full_n >= GATE1["min_signals"]  # the plan's 500-signal floor, enforced
             and te.get("ev_cents", -99) >= GATE1["min_ev_cents"]
             and te.get("brier", 1) <= GATE1["max_brier"]
             and te10.get("ev_cents", -99) > 0
-            and (te.get("n", 0) + lat_curve[HAND_LATENCY].get("n", 0)) > 0
         )
-        # full-period signal count also reported against the 500 threshold
-        report["full_period_n"] = int(metrics(sig)["n"]) if not sig.empty else 0
+        report["full_period_n"] = full_n
         report["latency_curve_test"] = lat_curve
         report["tau_buckets_test"] = tau_buckets
+        # the holdout has now been examined again — keep an honest counter so
+        # any future GREEN claim can be weighed against test-set mining
+        try:
+            evals = json.load(open("reports/holdout_evals.json"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            evals = {"count": 0}
+        evals["count"] += 1
+        with open("reports/holdout_evals.json", "w") as f:
+            json.dump(evals, f)
+        report["holdout_evals"] = evals["count"]
 
     report["gate1_green"] = bool(gate1_green)
     with open("reports/backtest_results.json", "w") as f:
@@ -356,7 +384,13 @@ def write_markdown(rep: dict):
             f"| test | {te.get('n',0)} | {te.get('ev_cents',0):+.2f} | {te.get('hit_rate',0):.3f} "
             f"| {te.get('brier',0):.3f} | {te.get('mean_ask',0):.3f} | {te.get('slip_cents',0):+.2f} |",
             "",
-            f"איתותים בכל התקופה ב-latency‏ 5s: **{rep.get('full_period_n', 0)}**",
+            f"איתותים בכל התקופה ב-latency‏ 5s: **{rep.get('full_period_n', 0)}**"
+            f" (רצפת GATE 1: 500)",
+            (f"רווח-בר-סמך 95% ‏(bootstrap) ל-EV בטסט: "
+             f"**[{rep['test_ev_ci95_cents'][0]}, {rep['test_ev_ci95_cents'][1]}]¢**"
+             if rep.get("test_ev_ci95_cents") else ""),
+            f"מספר הפעמים שסט הטסט נבחן עד כה: {rep.get('holdout_evals', '?')}"
+            " (כל בחינה נוספת מחלישה את תוקף ה-holdout)",
             "",
             "## רגישות ל-latency (סט הטסט)",
             "| latency | איתותים | EV ‏¢/מניה | פגיעה | Brier |",

@@ -54,6 +54,10 @@
     <div class="cell"><div class="l">PnL היום</div><div class="v" id="pnl">–</div></div>
     <div class="cell"><div class="l">בסיס Binance−אורקל</div><div class="v" id="basis">–</div></div>
   </div>
+  <button id="acted" style="display:none;background:var(--card);color:var(--fg);
+      border:1px solid var(--dim);border-radius:14px;padding:12px 26px;font-size:16px">
+    לחצתי בפולימרקט ✔</button>
+  <div id="recent" style="width:100%;max-width:430px;font-size:12px;color:var(--dim)"></div>
   <div id="feeds"></div>
 <script>
 const $ = id => document.getElementById(id);
@@ -66,7 +70,25 @@ const REASONS = {
   no_quotes: "אין ציטוטים בספר",
   insufficient_depth: "אין עומק מספיק בספר",
   edge_above_theta: "פער מעל הסף",
+  restored: "שוחזר אחרי ריסטארט",
 };
+const BLOCKED = {
+  kill_switch: "🛑 מתג חירום פעיל",
+  gates_not_green: "🔒 השערים לא ירוקים — אין LIVE",
+  daily_stop: "🛑 תקרת הפסד יומית — נעול",
+  one_position_per_window: "פוזיציה אחת לחלון",
+};
+function reasonText(r) {
+  if (!r) return "";
+  if (r.startsWith("blocked:")) {
+    const key = r.slice(8);
+    for (const k in BLOCKED) if (key.startsWith(k)) return BLOCKED[k];
+    if (key.startsWith("live_locked")) return "🛑 LIVE נעול 24 שעות";
+    if (key.startsWith("cooldown")) return "⏸ צינון אחרי הפסדים";
+    return "חסום: " + key;
+  }
+  return REASONS[r] || r;
+}
 
 function fmtCount(s) {
   if (s == null || s < 0) return "–:––";
@@ -92,8 +114,16 @@ function render() {
   $("card").className = side === "UP" ? "up" : side === "DOWN" ? "down" : "";
   $("side").textContent = side;
   $("stake").textContent = side === "PASS" ? "" : "$" + (sig.stake || 0).toFixed(0);
-  $("reason").textContent = (sig.locked ? "🔒 " : "") +
-      (REASONS[sig.reason] || sig.reason || "");
+  $("reason").textContent = (sig.locked ? "🔒 " : "") + reasonText(sig.reason);
+  // "I clicked" button: appears while a signal is locked and unmarked; feeds
+  // the acted column that LIVE risk accounting tracks
+  const showActed = sig.locked && side !== "PASS" && !actedMarked.has(p.window_ts);
+  $("acted").style.display = showActed ? "" : "none";
+  $("acted").dataset.win = p.window_ts;
+  const rec = p.recent || [];
+  $("recent").innerHTML = rec.length ? "אחרונים: " + rec.map(e =>
+      `<span dir="ltr">${e.side} $${(e.stake||0).toFixed(0)} ${e.won?"✓":"✗"}${e.pnl!=null?(e.pnl>=0?" +":" ")+e.pnl.toFixed(2):""}</span>`
+  ).join(" · ") : "";
   $("pfair").textContent = sig.p_fair == null ? "–" : sig.p_fair.toFixed(3);
   $("edge").textContent = (sig.edge * 100).toFixed(1) + "¢";
   $("asks").textContent = (p.ask_up ?? "–") + " / " + (p.ask_down ?? "–");
@@ -109,6 +139,18 @@ function render() {
   $("feeds").innerHTML = "binance<span class='dot " + (p.feeds?.binance ? "ok" : "bad") +
       "'></span> oracle<span class='dot " + (p.feeds?.oracle ? "ok" : "bad") + "'></span>";
 }
+
+const actedMarked = new Set();
+$("acted").addEventListener("click", async () => {
+  const win = Number($("acted").dataset.win);
+  try {
+    await fetch("/acted", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({window_ts: win})});
+    actedMarked.add(win);
+    $("acted").style.display = "none";
+  } catch (e) { /* keep the button so the user can retry */ }
+});
 
 let ws = null;
 function connect() {

@@ -38,10 +38,22 @@ class WebServer:
         return web.json_response(self.engine.status_payload())
 
     async def acted(self, req):
-        """Daniel marks that he actually clicked this window's recommendation."""
+        """Daniel marks that he actually clicked this window's recommendation.
+        Feeds LIVE risk accounting and measures the real hand latency."""
+        import json as _json
+        import time as _time
         body = await req.json()
         win = int(body["window_ts"])
         self.engine.store.upsert_window(win, self.engine.mode, acted=1)
+        st = self.engine.window
+        detail = {"window_ts": win, "acted_ts": _time.time()}
+        if st and st.window_ts == win:
+            if st.signal_ts:
+                detail["hand_latency_s"] = round(_time.time() - st.signal_ts, 2)
+            if st.signal and st.signal.side != "PASS":
+                side_book = st.book.get(st.signal.side.lower())
+                detail["ask_at_act"] = side_book[1] if side_book else None
+        self.engine.store.log_event("ACTED", _json.dumps(detail))
         return web.json_response({"ok": True, "window_ts": win})
 
     async def ws(self, req):

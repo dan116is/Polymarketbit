@@ -71,7 +71,18 @@ class Engine:
         self._last_vol_sample = 0.0
         self._last_heartbeat = 0.0
         self._feed_down_since: dict[str, float] = {}
-        self._last_feed_alert = 0.0
+        self._feed_alerted: set[str] = set()
+        self._last_feed_alert: dict[str, float] = {}
+        self._last_market_retry = 0.0
+        self._recent: deque[dict] = deque(maxlen=5)  # closed signals, for the PWA
+        self._bg: set[asyncio.Task] = set()
+
+    def _spawn(self, coro) -> None:
+        """Background task with a strong reference — the event loop keeps only
+        weak refs, so an unreferenced task can be GC'd mid-flight."""
+        t = asyncio.get_running_loop().create_task(coro)
+        self._bg.add(t)
+        t.add_done_callback(self._bg.discard)
 
     # ---- feed plumbing -----------------------------------------------------
     def _on_binance(self, price: float, ts: float) -> None:
@@ -109,9 +120,32 @@ class Engine:
     async def _open_window(self, win: int, partial: bool) -> WindowState:
         st = WindowState(window_ts=win, warmup=partial)
         rt = self.cfg["runtime"]
+
+        # A restart mid-window must NOT wipe what the previous process wrote:
+        # restore s_open and any fired signal (one-position-per-window survives
+        # restarts), and only create the row if it doesn't exist yet.
+        row = self.store.get_window(win, self.mode)
+        if row:
+            if row.get("s_open") is not None:
+                st.s_open = row["s_open"]
+                st.warmup = False
+                self.store.log_event("S_OPEN_RESTORED_FROM_DB", json.dumps(
+                    {"window_ts": win, "s_open": st.s_open}))
+            if row.get("signal") in ("UP", "DOWN"):
+                st.signaled = True
+                st.signal = Signal(row["signal"], row.get("stake_reco") or 0.0,
+                                   row.get("edge") or 0.0,
+                                   row.get("p_fair_signal") or 0.5, "restored")
+                st.signal_ask = (row.get("ask_up") if row["signal"] == "UP"
+                                 else row.get("ask_down"))
+                st.exec_ask = row.get("exec_ask")
+        else:
+            self.store.upsert_window(win, self.mode, signal=None, stake_reco=0.0)
+
+        # two quick attempts only — a Gamma outage must not freeze the 1Hz
+        # loop; the main loop keeps retrying via _retry_market
         slug = slug_for(win, rt["slug_prefix"])
-        t0 = time.time()
-        for _ in range(10):
+        for _ in range(2):
             try:
                 st.market = await self.gamma.market_by_slug(slug, win)
             except Exception as e:
@@ -122,13 +156,31 @@ class Engine:
         if st.market:
             self.store.log_event("WINDOW_OPEN", json.dumps(
                 {"window_ts": win, "slug": slug,
-                 "detect_latency_s": round(time.time() - t0, 3),
+                 "detect_latency_s": round(time.time() - win, 3),
                  "fee_bps": st.market.taker_base_fee_bps}))
-        else:
-            self.store.log_event("WINDOW_MISS", json.dumps({"window_ts": win, "slug": slug}))
-            log.error("window %s: market not found — MISS", win)
-        self.store.upsert_window(win, self.mode, signal=None, stake_reco=0.0)
         return st
+
+    async def _retry_market(self, st: WindowState, now: float) -> None:
+        """Keep re-fetching a missing market (rate-limited) instead of burning
+        the whole window after a transient Gamma failure."""
+        if st.market is not None or now - self._last_market_retry < 2.0:
+            return
+        self._last_market_retry = now
+        slug = slug_for(st.window_ts, self.cfg["runtime"]["slug_prefix"])
+        try:
+            st.market = await self.gamma.market_by_slug(slug, st.window_ts)
+        except Exception:
+            return
+        if st.market:
+            self.store.log_event("WINDOW_OPEN", json.dumps(
+                {"window_ts": st.window_ts, "slug": slug,
+                 "detect_latency_s": round(now - st.window_ts, 3),
+                 "fee_bps": st.market.taker_base_fee_bps, "late": True}))
+        elif now - st.window_ts > 30 and not getattr(st, "_miss_logged", False):
+            st._miss_logged = True
+            self.store.log_event("WINDOW_MISS", json.dumps(
+                {"window_ts": st.window_ts, "slug": slug}))
+            log.error("window %s: market not found — MISS", st.window_ts)
 
     async def _try_capture_open(self, st: WindowState) -> None:
         if st.s_open is not None:
@@ -163,6 +215,10 @@ class Engine:
         s_est = self.spot_estimate()
         if s_est is None or not self.vol.ready():
             return None
+        # a Binance outage freezes sigma at its last value — stale vol must
+        # pause signals, not feed them
+        if now - self.binance.ts > 15:
+            return None
         m = self.cfg["model"]
         up = st.book.get("up")
         down = st.book.get("down")
@@ -181,6 +237,15 @@ class Engine:
         return sig
 
     async def _fire_signal(self, st: WindowState, sig: Signal, now: float) -> None:
+        # defense-in-depth: the caller already checked, but a signal must never
+        # be written while risk blocks — if this trips, it's a real violation
+        # and GATE 2 counts it
+        verdict = self.risk.check(self.mode, now,
+                                  already_signaled_this_window=st.signaled)
+        if not verdict.allowed:
+            self.store.log_event("RISK_VIOLATION", json.dumps(
+                {"window_ts": st.window_ts, "reason": verdict.reason}))
+            return
         st.signaled = True
         st.signal = sig
         st.signal_ts = now
@@ -209,26 +274,40 @@ class Engine:
                 await hook(payload)
             except Exception as e:
                 log.warning("signal hook failed: %r", e)
-        # paper: sample the executable ask after simulated hand latency
-        if self.mode == "PAPER" and st.market:
-            asyncio.get_running_loop().create_task(self._sample_exec(st, sig))
+        # all modes: sample the executable ask over time (edge-decay evidence);
+        # the hand-latency sample prices the pnl so LIVE isn't booked at the
+        # optimistic 0s ask
+        if st.market:
+            self._spawn(self._sample_exec(st, sig))
 
     async def _sample_exec(self, st: WindowState, sig: Signal) -> None:
-        await asyncio.sleep(self.hand_latency_s)
+        """Edge-decay burst: the taken side's top-of-book at fixed offsets
+        after the signal, persisted to exec_samples. This measured decay curve
+        is the number a future M6 decision hinges on."""
         token = (st.market.token_id_up if sig.side == "UP"
                  else st.market.token_id_down)
-        b = await self.books.book(token)
-        if b:
-            _, ask, _, _ = BookPoller.top(b)
-            st.exec_ask = ask
-            self.store.upsert_window(st.window_ts, self.mode, exec_ask=ask)
+        t0 = st.signal_ts or time.time()
+        for dt in sorted({1.0, 2.0, 3.0, self.hand_latency_s, 8.0, 12.0}):
+            delay = t0 + dt - time.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            b = await self.books.book(token)
+            if not b:
+                continue
+            bid, ask, bdep, adep = BookPoller.top(b)
+            self.store.log_exec_sample(st.window_ts, self.mode, dt,
+                                       bid, ask, bdep, adep)
+            if dt == self.hand_latency_s and ask and 0 < ask < 1:
+                st.exec_ask = ask
+                self.store.upsert_window(st.window_ts, self.mode, exec_ask=ask)
 
     async def _close_window(self, st: WindowState) -> None:
         """Resolve outcome from the oracle open/close; log pnl for signals."""
         win_end = st.window_ts + self.cfg["runtime"]["window_seconds"]
-        # oracle close: wait up to 30s for the boundary point
+        # oracle close: wait up to 120s (the RTDS backlog depth) — a window
+        # resolved on-chain must not silently drop out of risk accounting
         s_close = None
-        for _ in range(30):
+        for _ in range(120):
             got = self.oracle.price_at(win_end, tolerance_s=3)
             if got:
                 s_close = got[0]
@@ -237,22 +316,58 @@ class Engine:
         outcome = None
         if s_close is not None and st.s_open is not None:
             outcome = "UP" if s_close >= st.s_open else "DOWN"
+        elif st.signal and st.signal.side in ("UP", "DOWN"):
+            self.store.log_event("UNRESOLVED_WINDOW", json.dumps(
+                {"window_ts": st.window_ts,
+                 "s_open": st.s_open, "s_close": s_close}))
+            for hook in self.alert_hooks:
+                try:
+                    await hook(f"⚠️ חלון {st.window_ts} עם איתות נסגר בלי תוצאה "
+                               f"מהאורקל — לא נכנס לחשבון הסיכון")
+                except Exception as e:
+                    log.warning("alert hook failed: %r", e)
         st.outcome = outcome
         fields: dict = {"s_close": s_close, "outcome": outcome}
+        pnl = None
         if st.signal and st.signal.side in ("UP", "DOWN") and outcome:
+            if st.exec_ask is None:
+                self.store.log_event("EXEC_MISSING", json.dumps(
+                    {"window_ts": st.window_ts}))
             ask = st.exec_ask if st.exec_ask is not None else st.signal_ask
-            if ask and 0 < ask < 1:
+            if ask and 0 < ask < 1 and st.market:
                 stake = st.signal.stake_usd
                 shares = stake / ask
                 fee = taker_fee_per_share(ask, st.market.taker_base_fee_bps) * shares
                 pnl = (shares * (1 - ask) - fee if st.signal.side == outcome
                        else -stake - fee)
                 fields["pnl"] = round(pnl, 4)
-                if self.mode in ("PAPER", "LIVE"):
-                    self.risk.add_pnl(pnl)
+                # PAPER tracks every recommendation (that IS the paper record);
+                # in LIVE the -$10 stop must track what Daniel actually clicked
+                # — hypothetical wins must not offset real losses
+                row = self.store.get_window(st.window_ts, self.mode)
+                acted = bool(row and row.get("acted"))
+                if self.mode == "PAPER" or (self.mode == "LIVE" and acted):
+                    # book to the window's own day (midnight-straddling windows)
+                    self.risk.add_pnl(pnl, now=float(win_end))
         self.store.upsert_window(st.window_ts, self.mode, **fields)
         self.store.log_event("WINDOW_CLOSE", json.dumps(
             {"window_ts": st.window_ts, "outcome": outcome, "s_close": s_close}))
+        # close the loop for the user: outcome back to phone + PWA strip
+        if st.signal and st.signal.side in ("UP", "DOWN") and outcome:
+            won = st.signal.side == outcome
+            self._recent.appendleft({
+                "window_ts": st.window_ts, "side": st.signal.side,
+                "stake": st.signal.stake_usd, "outcome": outcome,
+                "pnl": round(pnl, 2) if pnl is not None else None, "won": won})
+            msg = (f"{'✅' if won else '❌'} חלון {time.strftime('%H:%M', time.gmtime(st.window_ts))}: "
+                   f"{st.signal.side} ${st.signal.stake_usd:.0f} → {outcome}"
+                   + (f" | {pnl:+.2f}$" if pnl is not None else "")
+                   + f" | סה\"כ היום {self.risk.day_pnl():+.2f}$ ({self.mode})")
+            for hook in self.alert_hooks:
+                try:
+                    await hook(msg)
+                except Exception as e:
+                    log.warning("alert hook failed: %r", e)
 
     # ---- health: heartbeat (uptime evidence) + feed-down alerts ---------------
     async def _health_check(self, now: float) -> None:
@@ -266,18 +381,34 @@ class Engine:
                 {"feeds": feeds, "window_ts": self.window.window_ts if self.window else None}))
         for name, ok in feeds.items():
             if ok:
-                self._feed_down_since.pop(name, None)
-            else:
-                since = self._feed_down_since.setdefault(name, now)
-                if now - since > 120 and now - self._last_feed_alert > 3600:
-                    self._last_feed_alert = now
-                    self.store.log_event("FEED_DOWN", name)
+                since = self._feed_down_since.pop(name, None)
+                if name in self._feed_alerted:
+                    # recovery: audit event with outage duration + phone update
+                    self._feed_alerted.discard(name)
+                    dur = round(now - since, 1) if since else None
+                    self.store.log_event("FEED_UP", json.dumps(
+                        {"feed": name, "outage_s": dur}))
                     for hook in self.alert_hooks:
                         try:
-                            await hook(f"⚠️ פיד {name} מנותק כבר יותר מ-2 דקות — "
-                                       f"האיתותים מושהים עד שיתאושש")
+                            await hook(f"✅ פיד {name} חזר (היה מנותק "
+                                       f"{dur or '?'} שניות) — האיתותים חודשו")
                         except Exception as e:
                             log.warning("alert hook failed: %r", e)
+            else:
+                since = self._feed_down_since.setdefault(name, now)
+                if now - since > 120 and name not in self._feed_alerted:
+                    # audit event once per outage, per feed; Telegram throttled
+                    # per feed to one alert an hour
+                    self._feed_alerted.add(name)
+                    self.store.log_event("FEED_DOWN", name)
+                    if now - self._last_feed_alert.get(name, 0.0) > 3600:
+                        self._last_feed_alert[name] = now
+                        for hook in self.alert_hooks:
+                            try:
+                                await hook(f"⚠️ פיד {name} מנותק כבר יותר מ-2 דקות "
+                                           f"— האיתותים מושהים עד שיתאושש")
+                            except Exception as e:
+                                log.warning("alert hook failed: %r", e)
 
     # ---- status for delivery/PWA ----------------------------------------------
     def status_payload(self) -> dict:
@@ -296,21 +427,30 @@ class Engine:
                 "oracle": self.oracle.latest_ts > 0 and int(now) - self.oracle.latest_ts < 30,
             },
         }
+        payload["recent"] = list(self._recent)
         if st:
             tau = st.window_ts + self.cfg["runtime"]["window_seconds"] - now
             up, down = st.book.get("up"), st.book.get("down")
             sig = self._evaluate(st, now) if not st.signaled else st.signal
+            # the DISPLAY obeys risk too — kill switch, locks, cooldown and red
+            # gates suppress the recommendation itself, not only its logging
+            blocked = None
+            if sig and sig.side != "PASS" and not st.signaled:
+                verdict = self.risk.check(self.mode, now)
+                if not verdict.allowed:
+                    blocked = verdict.reason
             payload.update({
                 "window_ts": st.window_ts, "t_remaining": round(tau, 1),
                 "warmup": st.warmup, "s_open": st.s_open, "s_est": s_est,
                 "sigma_1s": self.vol.sigma_1s if self.vol.ready() else None,
                 "ask_up": up[1] if up else None, "ask_down": down[1] if down else None,
                 "signal": {
-                    "side": sig.side if sig else "PASS",
-                    "stake": sig.stake_usd if sig else 0.0,
+                    "side": "PASS" if blocked else (sig.side if sig else "PASS"),
+                    "stake": 0.0 if blocked else (sig.stake_usd if sig else 0.0),
                     "edge": round(sig.edge, 4) if sig else 0.0,
                     "p_fair": round(sig.p_fair, 4) if sig else None,
-                    "reason": sig.reason if sig else "warming_up",
+                    "reason": (f"blocked:{blocked}" if blocked
+                               else (sig.reason if sig else "warming_up")),
                     "locked": st.signaled,
                 },
             })
@@ -329,9 +469,10 @@ class Engine:
                 if self.window is None or self.window.window_ts != win:
                     if self.window is not None:
                         prev = self.window
-                        asyncio.get_running_loop().create_task(self._close_window(prev))
+                        self._spawn(self._close_window(prev))
                     self.window = await self._open_window(win, partial=(win == first_win))
                 st = self.window
+                await self._retry_market(st, now)
                 await self._try_capture_open(st)
                 await self._poll_books(st)
                 await self._health_check(now)
@@ -363,8 +504,14 @@ class Engine:
                         log.warning("status hook failed: %r", e)
                 await asyncio.sleep(max(0.0, 1.0 - (time.time() - now)))
         finally:
+            # let in-flight window-close/exec-sample tasks finish BEFORE the
+            # caller closes the store — otherwise a stop near a boundary loses
+            # that window's outcome or writes to a closed DB
+            if self._bg:
+                await asyncio.wait(self._bg, timeout=35)
             for t in tasks:
                 t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             await self.gamma.close()
             await self.books.close()
 

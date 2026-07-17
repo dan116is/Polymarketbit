@@ -64,6 +64,26 @@ def main():
     L += ["", "## בסיס Binance↔אורקל (דולר)", "```sql", sql, "```",
           f"", f"mean={row[0]} min={row[1]} max={row[2]}", ""]
 
+    # uptime from heartbeat coverage (1/minute when the engine loop is alive)
+    sql = "SELECT COUNT(*) FROM events WHERE kind='HEARTBEAT' AND ts>=? AND ts<?"
+    hb = q(conn, sql, (t0, t1))[0][0]
+    L += ["## ‏Uptime (מתוך HEARTBEAT לדקה)", "```sql", sql, "```", "",
+          f"heartbeats={hb} ⇒ ‏uptime ≈ **{100.0*hb/1440:.1f}%** מהיממה", ""]
+    sql = ("SELECT kind, COUNT(*) FROM events WHERE kind IN ('FEED_DOWN','FEED_UP') "
+           "AND ts>=? AND ts<? GROUP BY kind")
+    for kind, n in q(conn, sql, (t0, t1)):
+        L.append(f"- {kind}: {n}")
+
+    # measured edge decay after signals — the number M6 hinges on
+    sql = ("SELECT dt_s, COUNT(*), AVG(ask) FROM exec_samples "
+           "WHERE window_ts>=? AND window_ts<? GROUP BY dt_s ORDER BY dt_s")
+    rows = q(conn, sql, (t0, t1))
+    if rows:
+        L += ["", "## דעיכת ה-ask אחרי איתות (נמדד חי)", "```sql", sql, "```", "",
+              "| שניות אחרי איתות | n | ‏ask ממוצע |", "|---|---|---|"]
+        for dt, n, ask in rows:
+            L.append(f"| +{dt:.0f}s | {n} | {ask:.4f} |")
+
     out = f"reports/analyst_{day}.md"
     with open(out, "w") as f:
         f.write("\n".join(L))

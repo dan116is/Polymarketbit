@@ -159,7 +159,7 @@ async function pollBooks(){
     apiGet(CFG.clobBases, `/book?token_id=${S.market.tokenDown}`)]);
   if(bu) S.book.up = topOfBook(bu);
   if(bd) S.book.down = topOfBook(bd);
-  if(bu||bd) S.lastDataAt = nowS();
+  if(bu||bd){ S.lastDataAt = nowS(); S.bookAt = nowS(); }
 }
 
 // ---------- RTDS oracle (Chainlink btc/usd) ----------
@@ -254,13 +254,28 @@ async function resolveWindow(win, sOpen, sig, feeBps){
 }
 
 // ---------- window lifecycle + evaluation ----------
+function restorePending(){
+  // reload/boot: restore a signal locked earlier — current window's comes
+  // back live; an older one gets resolved via the oracle backlog if possible
+  let p; try{ p = JSON.parse(localStorage.ps_pending||"null"); }catch(e){ return; }
+  if(!p || !p.sig) return;
+  if(p.win === windowTs()){
+    S.signal = p.sig; S.sOpen = p.sOpen ?? S.sOpen;
+  } else {
+    resolveWindow(p.win, p.sOpen, p.sig, p.feeBps);
+    delete localStorage.ps_pending;
+  }
+}
+
 async function windowLoop(){
   if(S.warmupWin===null) S.warmupWin = windowTs();
+  restorePending();
   for(;;){
     const win = windowTs();
     if(S.win!==win){
       if(S.win!==null && S.signal)  // resolve the finished window in background
         resolveWindow(S.win, S.sOpen, S.signal, S.market?S.market.feeBps:0);
+      delete localStorage.ps_pending;
       S.win=win; S.market=null; S.sOpen=null; S.signal=null; S.book={up:null,down:null};
       for(let i=0;i<10 && !S.market;i++){ S.market = await loadMarket(win); if(!S.market) await sleep(600); }
     }
@@ -279,6 +294,8 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
 function evaluate(){
   if(S.signal || !S.market || S.sOpen==null || !S.vol.ready()) return;
+  // never lock a signal on a stale book (background tab, failed polls)
+  if(!S.bookAt || nowS()-S.bookAt > 5) return;
   const sEst = spotEstimate(); if(sEst==null) return;
   const tau = S.win+CFG.windowSeconds-nowS();
   if(tau<CFG.bandS[0] || tau>CFG.bandS[1]) return;
@@ -297,6 +314,10 @@ function evaluate(){
   while(stake>0 && stake>depth) stake = stake===2?1:0;
   if(stake<=0) return;
   S.signal = {side, stake, edge, ask, pFair:pf, tau, at:nowS()};
+  // survive a background-tab reload: the locked signal must not vanish from
+  // the paper log or re-fire differently in the same window
+  localStorage.ps_pending = JSON.stringify({win:S.win, sOpen:S.sOpen,
+      feeBps:S.market.feeBps, sig:S.signal});
   if(navigator.vibrate) navigator.vibrate([120,60,120]);
 }
 
@@ -358,14 +379,26 @@ function render(){
 connectOracle(); connectBinance(); windowLoop();
 setInterval(render, 250);
 // mobile: after screen-lock the sockets may be dead but look open — on
-// refocus force reconnects if the oracle went stale
+// refocus recycle each stale feed independently (a half-open Binance socket
+// must not wait for the oracle to also die)
 document.addEventListener("visibilitychange", () => {
   if(document.hidden) return;
-  if(nowS()-S.oracleLatestTs > 20){
-    try{S.oracleWs && S.oracleWs.close()}catch(e){}
-    try{S.binWs && S.binWs.close()}catch(e){}
-  }
+  if(nowS()-S.oracleLatestTs > 20){ try{S.oracleWs && S.oracleWs.close()}catch(e){} }
+  if(nowS()-S.binanceTs > 20){ try{S.binWs && S.binWs.close()}catch(e){} }
+  acquireWakeLock();
 });
+
+// keep the screen alive during a window (best effort; needs one user gesture)
+let wakeLock = null;
+async function acquireWakeLock(){
+  try{
+    if(navigator.wakeLock && !wakeLock){
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    }
+  }catch(e){ /* denied/unsupported — fine */ }
+}
+document.addEventListener("click", acquireWakeLock, {once:false});
 </script>
 </body>
 </html>
