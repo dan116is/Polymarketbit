@@ -67,6 +67,7 @@
   </div>
   <div id="rounds"></div>
   <div id="feeds"></div>
+  <button class="ps" id="pushbtn" hidden>🔔 הפעל התראות רקע (גם כשהאפליקציה סגורה)</button>
   <button class="ps" id="histbtn">📊 היסטוריה מלאה</button>
   <div id="panel" hidden>
     <div class="grid">
@@ -601,6 +602,37 @@ document.addEventListener("visibilitychange", () => {
   }
   acquireWakeLock();
 });
+
+// ---------- background push (works only on the hosted site) ----------
+const b64uToU8 = s => { const b=atob(s.replace(/-/g,"+").replace(/_/g,"/"));
+                        return Uint8Array.from(b, c=>c.charCodeAt(0)); };
+(async () => {
+  try{
+    if(!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    const r = await fetch("/api/push/vapid"); if(!r.ok) return;
+    const {publicKey} = await r.json();
+    const reg = await navigator.serviceWorker.register("/sw.js");
+    fetch("/api/push/tick").catch(()=>{});   // keep the 24/7 watcher armed
+    const btn = $("pushbtn");
+    const existing = await reg.pushManager.getSubscription();
+    if(existing) return;                      // already enabled — stay hidden
+    btn.hidden = false;
+    btn.addEventListener("click", async () => {
+      try{
+        btn.textContent = "מפעיל…";
+        const perm = await Notification.requestPermission();
+        if(perm !== "granted"){ btn.textContent = "צריך לאשר התראות בדפדפן"; return; }
+        const sub = await reg.pushManager.subscribe(
+          {userVisibleOnly: true, applicationServerKey: b64uToU8(publicKey)});
+        const res = await fetch("/api/push/subscribe", {method:"POST",
+          headers:{"Content-Type":"application/json"}, body: JSON.stringify(sub)});
+        if(!res.ok) throw new Error("subscribe failed");
+        btn.textContent = "התראות רקע פועלות ✓ (בדוק שקיבלת התראה)";
+        setTimeout(()=>{ btn.hidden = true; }, 5000);
+      }catch(e){ btn.textContent = "ההפעלה נכשלה — נסה שוב"; }
+    });
+  }catch(e){}
+})();
 
 // keep the screen alive + unlock audio/notifications (needs one user gesture)
 let wakeLock = null;
