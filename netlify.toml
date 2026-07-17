@@ -1,0 +1,14 @@
+# POLYSIGNAL standalone monitor — static deploy of web/ (no build step).
+[build]
+  publish = "web"
+
+# Same-origin proxy fallbacks in case a browser/API ever tightens CORS.
+[[redirects]]
+  from = "/api/gamma/*"
+  to = "https://gamma-api.polymarket.com/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/clob/*"
+  to = "https://clob.polymarket.com/:splat"
+  status = 200

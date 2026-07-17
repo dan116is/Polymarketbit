@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0b0e14">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230b0e14'/%3E%3Cpath d='M25 62 L45 42 L58 55 L78 30' stroke='%2316c784' stroke-width='9' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>POLYSIGNAL</title>
+<style>
+  :root { --bg:#0b0e14; --card:#141a26; --fg:#e8ecf4; --dim:#8b93a7;
+          --up:#16c784; --down:#ea3943; --pass:#2b3245; --warn:#f5a623; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--fg); font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+         min-height:100vh; display:flex; flex-direction:column; align-items:center;
+         padding:12px; gap:12px; }
+  #mode { font-size:13px; letter-spacing:1px; color:var(--dim); }
+  #card { width:100%; max-width:430px; background:var(--pass); border-radius:24px;
+          padding:34px 20px; text-align:center; transition:background .3s; }
+  #card.up { background:var(--up); color:#04321f; }
+  #card.down { background:var(--down); color:#3d0509; }
+  #card.dead { background:#20242e; color:var(--dim); }
+  #side { font-size:64px; font-weight:800; letter-spacing:4px; direction:ltr; }
+  #stake { font-size:26px; font-weight:700; margin-top:2px; min-height:34px; }
+  #reason { font-size:13px; opacity:.8; margin-top:6px; }
+  #count { font-size:46px; font-variant-numeric:tabular-nums; font-weight:600; direction:ltr; }
+  #countlbl { font-size:12px; color:var(--dim); letter-spacing:1px; }
+  .grid { width:100%; max-width:430px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .cell { background:var(--card); border-radius:14px; padding:12px 14px; }
+  .cell .l { font-size:11px; color:var(--dim); letter-spacing:.5px; }
+  .cell .v { font-size:20px; font-variant-numeric:tabular-nums; margin-top:3px; direction:ltr; text-align:left; }
+  #feeds { font-size:12px; color:var(--dim); }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:4px; margin:0 3px 0 10px; }
+  .ok { background:var(--up); } .bad { background:var(--down); }
+  #disclaimer { font-size:11px; color:var(--warn); text-align:center; max-width:430px; }
+</style>
+</head>
+<body>
+  <div id="mode">מתחבר…</div>
+  <div id="card" class="dead">
+    <div id="side">—</div>
+    <div id="stake"></div>
+    <div id="reason">ממתין לנתונים</div>
+  </div>
+  <div style="text-align:center">
+    <div id="count">–:––</div>
+    <div id="countlbl">לסגירת החלון</div>
+  </div>
+  <div class="grid">
+    <div class="cell"><div class="l">P fair (עלייה)</div><div class="v" id="pfair">–</div></div>
+    <div class="cell"><div class="l">Edge</div><div class="v" id="edge">–</div></div>
+    <div class="cell"><div class="l">Ask ‏Up / Down</div><div class="v" id="asks">– / –</div></div>
+    <div class="cell"><div class="l">ספוט / פתיחה</div><div class="v" id="spot">–</div></div>
+  </div>
+  <div id="feeds"></div>
+  <div id="disclaimer">מצב MONITOR‏ (PAPER) — תצוגת שוק חיה בלבד, לא המלצת כסף. GATE 1 אדום: ראה reports/GATE1_NO_GO.md</div>
+<script>
+"use strict";
+/* POLYSIGNAL standalone monitor — the whole engine in the browser.
+   Same math as polysignal/quant.py; data straight from the public APIs:
+   Gamma (market meta), CLOB REST (books), RTDS WS (Chainlink oracle),
+   Binance WS (low-latency spot proxy). Stake ladder capped at $2 because
+   GATE 2 is not green; this build recommends nothing — it displays. */
+
+const CFG = {
+  windowSeconds: 300,
+  slugPrefix: "btc-updown-5m",
+  thetaCents: 6.0, bufferCents: 2.0, ladderStepCents: 4.0,
+  sigmaHalflifeS: 90, sigmaFloor: 1e-6, bandS: [15, 120],
+  gammaBases: ["https://gamma-api.polymarket.com", "/api/gamma"],
+  clobBases: ["https://clob.polymarket.com", "/api/clob"],
+  rtdsWs: "wss://ws-live-data.polymarket.com",
+  binanceWs: "wss://data-stream.binance.vision/ws/btcusdt@trade",
+};
+
+// ---------- math (mirrors quant.py) ----------
+function erf(x){const s=Math.sign(x);x=Math.abs(x);
+  const t=1/(1+0.3275911*x);
+  const y=1-((((1.061405429*t-1.453152027)*t+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x);
+  return s*y;}
+const phi = x => 0.5*(1+erf(x/Math.SQRT2));
+const feePerShare = (p, bps) => (p>0 && p<1) ? (bps/10000)*Math.min(p,1-p) : 0;
+
+class EwmaVol {
+  constructor(hl, floor){this.hl=hl; this.floor=floor; this.var=null; this.lp=null; this.lt=null; this.n=0;}
+  update(p, ts){
+    if(p<=0) return;
+    if(this.lp!==null){
+      const dt=ts-this.lt; if(dt<=0) return;
+      const r=Math.log(p/this.lp), r2s=r*r/dt, d=Math.pow(0.5, dt/this.hl);
+      this.var = this.var===null ? r2s : d*this.var+(1-d)*r2s; this.n++;
+    }
+    this.lp=p; this.lt=ts;
+  }
+  get sigma1s(){return this.var===null?this.floor:Math.max(Math.sqrt(this.var),this.floor);}
+  ready(){return this.n>=30;}
+}
+
+function stakeFromEdge(net, step){ // gate2 not green -> $5 tier capped to $2
+  if(net<=0) return 0; if(net<=step) return 1; return 2;
+}
+
+// ---------- state ----------
+const S = {
+  win: null, market: null, sOpen: null, warmupWin: null,
+  oracle: new Map(), oracleLatestTs: 0,
+  binance: null, binanceTs: 0, binHist: [],
+  vol: new EwmaVol(CFG.sigmaHalflifeS, CFG.sigmaFloor),
+  book: {up: null, down: null},   // [bid, ask, bidSz, askSz]
+  signal: null, // locked signal for this window
+  feeds: {oracle: false, binance: false},
+  lastDataAt: Date.now()/1000 + 12,  // boot grace: show "connecting", not OFFLINE
+};
+
+const nowS = () => Date.now()/1000;
+const windowTs = t => Math.floor((t ?? nowS())/CFG.windowSeconds)*CFG.windowSeconds;
+
+// ---------- fetch with CORS fallback to Netlify proxy ----------
+async function apiGet(bases, path){
+  for(const b of bases){
+    try{
+      const r = await fetch(b+path, {signal: AbortSignal.timeout(6000)});
+      if(r.ok) return await r.json();
+    }catch(e){/* try next base */}
+  }
+  return null;
+}
+
+// ---------- Gamma: market per window ----------
+async function loadMarket(win){
+  const arr = await apiGet(CFG.gammaBases, `/markets?slug=${CFG.slugPrefix}-${win}`);
+  if(!arr || !arr.length) return null;
+  const m = arr[0];
+  const ids = JSON.parse(m.clobTokenIds);
+  const outcomes = JSON.parse(m.outcomes || '["Up","Down"]');
+  return {
+    tokenUp: ids[outcomes.indexOf("Up")], tokenDown: ids[outcomes.indexOf("Down")],
+    feeBps: Number(m.takerBaseFee || 0),
+  };
+}
+
+// ---------- CLOB books ----------
+function topOfBook(book){
+  const bids=book.bids||[], asks=book.asks||[];
+  let bb=null, ba=null;
+  for(const b of bids){const p=+b.price; if(bb===null||p>bb) bb=p;}
+  for(const a of asks){const p=+a.price; if(ba===null||p<ba) ba=p;}
+  const bSz = bids.filter(b=>+b.price===bb).reduce((s,b)=>s+(+b.size)*(+b.price),0);
+  const aSz = asks.filter(a=>+a.price===ba).reduce((s,a)=>s+(+a.size)*(+a.price),0);
+  return [bb, ba, bSz, aSz];
+}
+async function pollBooks(){
+  if(!S.market) return;
+  const [bu, bd] = await Promise.all([
+    apiGet(CFG.clobBases, `/book?token_id=${S.market.tokenUp}`),
+    apiGet(CFG.clobBases, `/book?token_id=${S.market.tokenDown}`)]);
+  if(bu) S.book.up = topOfBook(bu);
+  if(bd) S.book.down = topOfBook(bd);
+  if(bu||bd) S.lastDataAt = nowS();
+}
+
+// ---------- RTDS oracle (Chainlink btc/usd) ----------
+function connectOracle(){
+  let ws;
+  const sub = JSON.stringify({action:"subscribe", subscriptions:[
+    {topic:"crypto_prices_chainlink", type:"*", filters: JSON.stringify({symbol:"btc/usd"})}]});
+  const open = () => {
+    ws = new WebSocket(CFG.rtdsWs);
+    let resubTimer;
+    ws.onopen = () => { ws.send(sub); resubTimer=setInterval(()=>{try{ws.send(sub)}catch(e){}}, 10000); };
+    ws.onmessage = ev => {
+      if(typeof ev.data==="string" && ev.data.trim().toLowerCase()==="ping"){ws.send("pong");return;}
+      let m; try{m=JSON.parse(ev.data)}catch(e){return;}
+      const p = m && m.payload;
+      if(!p || p.symbol!=="btc/usd") return;
+      const pts = Array.isArray(p.data)?p.data:[p];
+      for(const d of pts){
+        if(d && d.timestamp!=null && d.value!=null){
+          const ts = Math.floor(d.timestamp/1000);
+          S.oracle.set(ts, +d.value);
+          if(ts>S.oracleLatestTs) S.oracleLatestTs=ts;
+        }
+      }
+      const cut = S.oracleLatestTs-900;
+      for(const k of S.oracle.keys()) if(k<cut) S.oracle.delete(k);
+      S.feeds.oracle = true; S.lastDataAt = nowS();
+    };
+    ws.onclose = () => { clearInterval(resubTimer); S.feeds.oracle=false; setTimeout(open, 2000); };
+    ws.onerror = () => { try{ws.close()}catch(e){} };
+  };
+  open();
+}
+function oracleAt(ts, tol=3){
+  if(S.oracle.has(ts)) return S.oracle.get(ts);
+  for(let d=1; d<=tol; d++){
+    if(S.oracle.has(ts-d)) return S.oracle.get(ts-d);
+    if(S.oracle.has(ts+d)) return S.oracle.get(ts+d);
+  }
+  return null;
+}
+
+// ---------- Binance spot proxy ----------
+function connectBinance(){
+  let lastVol=0;
+  const open = () => {
+    const ws = new WebSocket(CFG.binanceWs);
+    ws.onmessage = ev => {
+      let d; try{d=JSON.parse(ev.data)}catch(e){return;}
+      const p=+d.p, ts=d.T/1000;
+      S.binance=p; S.binanceTs=ts; S.feeds.binance=true; S.lastDataAt=nowS();
+      S.binHist.push([ts,p]); if(S.binHist.length>1200) S.binHist.shift();
+      if(ts-lastVol>=1){S.vol.update(p,ts); lastVol=ts;}
+    };
+    ws.onclose = () => { S.feeds.binance=false; setTimeout(open, 2000); };
+    ws.onerror = () => { try{ws.close()}catch(e){} };
+  };
+  open();
+}
+function binanceAt(ts){
+  for(let i=S.binHist.length-1;i>=0;i--) if(S.binHist[i][0]<=ts) return S.binHist[i][1];
+  return S.binHist.length?S.binHist[0][1]:null;
+}
+function spotEstimate(){ // oracle anchor + binance delta: basis cancels
+  if(!S.oracleLatestTs || nowS()-S.oracleLatestTs>30) return null;
+  const anchor = S.oracle.get(S.oracleLatestTs);
+  const bNow=S.binance, bThen=binanceAt(S.oracleLatestTs);
+  if(anchor==null) return null;
+  return (bNow!=null && bThen!=null) ? anchor+(bNow-bThen) : anchor;
+}
+
+// ---------- window lifecycle + evaluation ----------
+async function windowLoop(){
+  if(S.warmupWin===null) S.warmupWin = windowTs();
+  for(;;){
+    const win = windowTs();
+    if(S.win!==win){
+      S.win=win; S.market=null; S.sOpen=null; S.signal=null; S.book={up:null,down:null};
+      for(let i=0;i<10 && !S.market;i++){ S.market = await loadMarket(win); if(!S.market) await sleep(600); }
+    }
+    if(S.sOpen===null && win!==S.warmupWin) S.sOpen = oracleAt(win);
+    await pollBooks();
+    evaluate();
+    await sleep(1200);
+  }
+}
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+function evaluate(){
+  if(S.signal || !S.market || S.sOpen==null || !S.vol.ready()) return;
+  const sEst = spotEstimate(); if(sEst==null) return;
+  const tau = S.win+CFG.windowSeconds-nowS();
+  if(tau<CFG.bandS[0] || tau>CFG.bandS[1]) return;
+  const th=CFG.thetaCents/100, buf=CFG.bufferCents/100, step=CFG.ladderStepCents/100;
+  const pf = phi(Math.log(sEst/S.sOpen)/(S.vol.sigma1s*Math.sqrt(tau)));
+  const cands=[];
+  if(S.book.up && S.book.up[1]>0 && S.book.up[1]<1)
+    cands.push(["UP", pf-S.book.up[1]-feePerShare(S.book.up[1],S.market.feeBps)-buf, S.book.up[3]]);
+  if(S.book.down && S.book.down[1]>0 && S.book.down[1]<1)
+    cands.push(["DOWN", (1-pf)-S.book.down[1]-feePerShare(S.book.down[1],S.market.feeBps)-buf, S.book.down[3]]);
+  if(!cands.length) return;
+  cands.sort((a,b)=>b[1]-a[1]);
+  const [side, edge, depth] = cands[0];
+  if(edge<=th) return;
+  let stake = stakeFromEdge(edge-th, step);
+  while(stake>0 && stake>depth) stake = stake===2?1:0;
+  if(stake<=0) return;
+  S.signal = {side, stake, edge, pFair:pf, tau, at:nowS()};
+  if(navigator.vibrate) navigator.vibrate([120,60,120]);
+}
+
+// ---------- render ----------
+const $ = id => document.getElementById(id);
+function currentView(){
+  if(S.signal) return S.signal;
+  // live (non-locking) evaluation for display only
+  if(!S.market || S.sOpen==null || !S.vol.ready()) return null;
+  const sEst=spotEstimate(); if(sEst==null) return null;
+  const tau=S.win+CFG.windowSeconds-nowS(); if(tau<=0) return null;
+  const pf=phi(Math.log(sEst/S.sOpen)/(S.vol.sigma1s*Math.sqrt(tau)));
+  let edge=-1;
+  if(S.book.up&&S.book.down){
+    const eu=pf-S.book.up[1]-feePerShare(S.book.up[1],S.market.feeBps)-CFG.bufferCents/100;
+    const ed=(1-pf)-S.book.down[1]-feePerShare(S.book.down[1],S.market.feeBps)-CFG.bufferCents/100;
+    edge=Math.max(eu,ed);
+  }
+  return {side:"PASS", stake:0, edge, pFair:pf, tau};
+}
+function render(){
+  const stale = nowS()-S.lastDataAt > 8;
+  const t = nowS();
+  if(stale){
+    $("card").className="dead"; $("side").textContent="OFFLINE";
+    $("stake").textContent=""; $("reason").textContent="אין נתונים — לא לסחור לפי המסך הזה";
+    $("mode").textContent="מנותק"; return;
+  }
+  const v = currentView();
+  const warm = S.win===S.warmupWin || S.sOpen==null;
+  $("mode").textContent = "MONITOR · PAPER" + (warm?" · חימום":"");
+  const side = v?v.side:"PASS";
+  $("card").className = side==="UP"?"up":side==="DOWN"?"down":"";
+  $("side").textContent = side;
+  $("stake").textContent = (v && v.side!=="PASS") ? "$"+v.stake.toFixed(0)+" (נייר)" : "";
+  $("reason").textContent = S.signal ? "🔒 איתות ננעל לחלון הזה"
+      : warm ? "ממתין לפתיחת החלון הבא (חימום)" : (v?"אין פער מעל הסף":"אוסף נתונים…");
+  $("pfair").textContent = v?v.pFair.toFixed(3):"–";
+  $("edge").textContent = v&&v.edge>-1 ? (v.edge*100).toFixed(1)+"¢" : "–";
+  $("asks").textContent = (S.book.up?S.book.up[1]:"–")+" / "+(S.book.down?S.book.down[1]:"–");
+  const sEst=spotEstimate();
+  $("spot").textContent = (sEst?sEst.toFixed(0):"–")+" / "+(S.sOpen?S.sOpen.toFixed(0):"–");
+  const rem = S.win ? Math.max(0, S.win+CFG.windowSeconds-t) : null;
+  $("count").textContent = rem==null?"–:––":`${Math.floor(rem/60)}:${String(Math.floor(rem%60)).padStart(2,"0")}`;
+  $("feeds").innerHTML = "binance<span class='dot "+(S.feeds.binance?"ok":"bad")+
+      "'></span> oracle<span class='dot "+(S.feeds.oracle&&t-S.oracleLatestTs<30?"ok":"bad")+"'></span>";
+}
+
+connectOracle(); connectBinance(); windowLoop();
+setInterval(render, 250);
+</script>
+</body>
+</html>

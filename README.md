@@ -45,7 +45,8 @@ Gamma (slug → market meta)            ↓
 | `polysignal/risk.py` | money rules: gates, daily stop, cooldown, kill-switch |
 | `polysignal/store.py` | SQLite schema §4.4 + gate flags |
 | `polysignal/delivery/` | Telegram notifier + command loop, PWA server |
-| `polysignal/pwa/` | single-file phone app |
+| `polysignal/pwa/` | single-file phone app (served by the engine) |
+| `web/` + `netlify.toml` | standalone browser-only monitor — deployable to Netlify, no server |
 | `scripts/m0_discovery.py` | M0 spike: prove market id + book + oracle open, live |
 | `scripts/backtest.py` | M2 harness: 15.7K windows replay, grid scan, GATE 1 |
 | `scripts/gate2_check.py` | GATE 2 evaluation over the PAPER log |
