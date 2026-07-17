@@ -45,7 +45,7 @@ Gamma (‏slug ← מטא-דאטה)               ↓
 | `polysignal/store.py` | סכמת SQLite לפי סעיף 4.4 + דגלי שערים |
 | `polysignal/delivery/` | טלגרם (התראות + פקודות) ושרת ה-PWA |
 | `polysignal/pwa/` | אפליקציית הטלפון (מוגשת מהמנוע) |
-| `web/` + `netlify.toml` | מוניטור עצמאי לדפדפן — נפרס ל-Netlify, בלי שרת |
+| `web/` + `netlify.toml` | מוניטור עצמאי לדפדפן — בלי שרת. **חי כעת ב:** https://polysignal-monitor.higgsfield.app (וגם נפרס ל-Netlify מהריפו) |
 | `scripts/m0_discovery.py` | ‏spike של M0: הוכחת זיהוי + ספר + פתיחת אורקל, חי |
 | `scripts/backtest.py` | ‏harness של M2: שחזור 15.7K חלונות, סריקת רשת, GATE 1 |
 | `scripts/gate2_check.py` | הערכת GATE 2 על לוג ה-PAPER |
