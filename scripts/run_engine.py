@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
+import signal
 import sys
 
 sys.path.insert(0, ".")
@@ -43,11 +45,19 @@ async def main():
         tg = TelegramNotifier.from_env()
         if tg:
             engine.signal_hooks.append(tg.on_signal)
+            engine.alert_hooks.append(tg.send)
             asyncio.get_running_loop().create_task(
                 tg.command_loop(engine.risk, engine))
         web = WebServer(engine)
         await web.start()
         engine.status_hooks.append(web.broadcast)
+
+    # graceful shutdown: Task Scheduler stop / Ctrl+C closes the DB cleanly
+    loop = asyncio.get_running_loop()
+    for sig_name in ("SIGINT", "SIGTERM"):
+        if hasattr(signal, sig_name):
+            with contextlib.suppress(NotImplementedError):  # Windows event loop
+                loop.add_signal_handler(getattr(signal, sig_name), engine.stop)
 
     store.log_event("ENGINE_START", json.dumps({"mode": args.mode}))
     if args.minutes > 0:

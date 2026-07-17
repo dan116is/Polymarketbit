@@ -51,8 +51,11 @@
     <div class="cell"><div class="l">Edge</div><div class="v" id="edge">–</div></div>
     <div class="cell"><div class="l">Ask ‏Up / Down</div><div class="v" id="asks">– / –</div></div>
     <div class="cell"><div class="l">ספוט / פתיחה</div><div class="v" id="spot">–</div></div>
+    <div class="cell"><div class="l">PnL היום (נייר)</div><div class="v" id="pnl">$0.00</div></div>
+    <div class="cell"><div class="l">בסיס Binance−אורקל</div><div class="v" id="basis">–</div></div>
   </div>
   <div id="feeds"></div>
+  <div id="history" style="width:100%;max-width:430px;font-size:12px;color:var(--dim)"></div>
   <div id="disclaimer">מצב MONITOR‏ (PAPER) — תצוגת שוק חיה בלבד, לא המלצת כסף. GATE 1 אדום: ראה reports/GATE1_NO_GO.md</div>
 <script>
 "use strict";
@@ -166,6 +169,7 @@ function connectOracle(){
     {topic:"crypto_prices_chainlink", type:"*", filters: JSON.stringify({symbol:"btc/usd"})}]});
   const open = () => {
     ws = new WebSocket(CFG.rtdsWs);
+    S.oracleWs = ws;
     let resubTimer;
     ws.onopen = () => { ws.send(sub); resubTimer=setInterval(()=>{try{ws.send(sub)}catch(e){}}, 10000); };
     ws.onmessage = ev => {
@@ -204,6 +208,7 @@ function connectBinance(){
   let lastVol=0;
   const open = () => {
     const ws = new WebSocket(CFG.binanceWs);
+    S.binWs = ws;
     ws.onmessage = ev => {
       let d; try{d=JSON.parse(ev.data)}catch(e){return;}
       const p=+d.p, ts=d.T/1000;
@@ -228,16 +233,43 @@ function spotEstimate(){ // oracle anchor + binance delta: basis cancels
   return (bNow!=null && bThen!=null) ? anchor+(bNow-bThen) : anchor;
 }
 
+// ---------- paper history (localStorage) ----------
+function history(){ try{return JSON.parse(localStorage.ps_history||"[]")}catch(e){return []} }
+function saveHistory(h){ localStorage.ps_history = JSON.stringify(h.slice(-100)); }
+function dayPnl(){
+  const day0 = Math.floor(nowS()/86400)*86400;
+  return history().filter(e=>e.win>=day0 && e.pnl!=null).reduce((s,e)=>s+e.pnl,0);
+}
+async function resolveWindow(win, sOpen, sig, feeBps){
+  if(!sig || sOpen==null) return;
+  let sClose=null;
+  for(let i=0;i<30 && sClose==null;i++){ sClose=oracleAt(win+CFG.windowSeconds); if(sClose==null) await sleep(1000); }
+  if(sClose==null) return;
+  const outcome = sClose>=sOpen ? "UP" : "DOWN";
+  const a = sig.ask, shares = sig.stake/a, fee = feePerShare(a,feeBps)*shares;
+  const pnl = sig.side===outcome ? shares*(1-a)-fee : -sig.stake-fee;
+  const h = history(); h.push({win, side:sig.side, stake:sig.stake, ask:a,
+                              outcome, pnl:+pnl.toFixed(3)});
+  saveHistory(h);
+}
+
 // ---------- window lifecycle + evaluation ----------
 async function windowLoop(){
   if(S.warmupWin===null) S.warmupWin = windowTs();
   for(;;){
     const win = windowTs();
     if(S.win!==win){
+      if(S.win!==null && S.signal)  // resolve the finished window in background
+        resolveWindow(S.win, S.sOpen, S.signal, S.market?S.market.feeBps:0);
       S.win=win; S.market=null; S.sOpen=null; S.signal=null; S.book={up:null,down:null};
       for(let i=0;i<10 && !S.market;i++){ S.market = await loadMarket(win); if(!S.market) await sleep(600); }
     }
-    if(S.sOpen===null && win!==S.warmupWin) S.sOpen = oracleAt(win);
+    // cold-start: the oracle backlog reaches ~70s back, so even the first
+    // (warmup) window often recovers its open price
+    if(S.sOpen===null){
+      S.sOpen = oracleAt(win);
+      if(S.sOpen!=null && win===S.warmupWin) S.warmupWin = -1;
+    }
     await pollBooks();
     evaluate();
     await sleep(1200);
@@ -254,17 +286,17 @@ function evaluate(){
   const pf = phi(Math.log(sEst/S.sOpen)/(S.vol.sigma1s*Math.sqrt(tau)));
   const cands=[];
   if(S.book.up && S.book.up[1]>0 && S.book.up[1]<1)
-    cands.push(["UP", pf-S.book.up[1]-feePerShare(S.book.up[1],S.market.feeBps)-buf, S.book.up[3]]);
+    cands.push(["UP", pf-S.book.up[1]-feePerShare(S.book.up[1],S.market.feeBps)-buf, S.book.up[3], S.book.up[1]]);
   if(S.book.down && S.book.down[1]>0 && S.book.down[1]<1)
-    cands.push(["DOWN", (1-pf)-S.book.down[1]-feePerShare(S.book.down[1],S.market.feeBps)-buf, S.book.down[3]]);
+    cands.push(["DOWN", (1-pf)-S.book.down[1]-feePerShare(S.book.down[1],S.market.feeBps)-buf, S.book.down[3], S.book.down[1]]);
   if(!cands.length) return;
   cands.sort((a,b)=>b[1]-a[1]);
-  const [side, edge, depth] = cands[0];
+  const [side, edge, depth, ask] = cands[0];
   if(edge<=th) return;
   let stake = stakeFromEdge(edge-th, step);
   while(stake>0 && stake>depth) stake = stake===2?1:0;
   if(stake<=0) return;
-  S.signal = {side, stake, edge, pFair:pf, tau, at:nowS()};
+  S.signal = {side, stake, edge, ask, pFair:pf, tau, at:nowS()};
   if(navigator.vibrate) navigator.vibrate([120,60,120]);
 }
 
@@ -311,10 +343,29 @@ function render(){
   $("count").textContent = rem==null?"–:––":`${Math.floor(rem/60)}:${String(Math.floor(rem%60)).padStart(2,"0")}`;
   $("feeds").innerHTML = "binance<span class='dot "+(S.feeds.binance?"ok":"bad")+
       "'></span> oracle<span class='dot "+(S.feeds.oracle&&t-S.oracleLatestTs<30?"ok":"bad")+"'></span>";
+  const dp = dayPnl();
+  $("pnl").textContent = (dp>=0?"+":"")+"$"+dp.toFixed(2);
+  $("pnl").style.color = dp>0?"var(--up)":dp<0?"var(--down)":"";
+  const anchor = S.oracle.get(S.oracleLatestTs);
+  $("basis").textContent = (S.binance!=null && anchor!=null)
+      ? ((S.binance-anchor>=0?"+":"")+"$"+(S.binance-anchor).toFixed(1)) : "–";
+  const h = history().slice(-3).reverse();
+  $("history").innerHTML = h.length ? "איתותים אחרונים (נייר): " + h.map(e =>
+      `<span dir="ltr">${e.side} $${e.stake}@${e.ask} → ${e.outcome===e.side?"✓":"✗"} ${e.pnl>=0?"+":""}${e.pnl.toFixed(2)}</span>`
+  ).join(" · ") : "";
 }
 
 connectOracle(); connectBinance(); windowLoop();
 setInterval(render, 250);
+// mobile: after screen-lock the sockets may be dead but look open — on
+// refocus force reconnects if the oracle went stale
+document.addEventListener("visibilitychange", () => {
+  if(document.hidden) return;
+  if(nowS()-S.oracleLatestTs > 20){
+    try{S.oracleWs && S.oracleWs.close()}catch(e){}
+    try{S.binWs && S.binWs.close()}catch(e){}
+  }
+});
 </script>
 </body>
 </html>

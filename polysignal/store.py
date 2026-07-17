@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS events (
     kind  TEXT NOT NULL,
     detail TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts);
+CREATE INDEX IF NOT EXISTS idx_events_kind ON events (kind, ts);
+CREATE INDEX IF NOT EXISTS idx_windows_mode ON windows (mode, window_ts);
 """
 
 

@@ -66,8 +66,12 @@ class Engine:
         self.window: WindowState | None = None
         self.signal_hooks: list[SignalHook] = []
         self.status_hooks: list[SignalHook] = []
+        self.alert_hooks: list[Callable[[str], Awaitable]] = []
         self._stop = asyncio.Event()
         self._last_vol_sample = 0.0
+        self._last_heartbeat = 0.0
+        self._feed_down_since: dict[str, float] = {}
+        self._last_feed_alert = 0.0
 
     # ---- feed plumbing -----------------------------------------------------
     def _on_binance(self, price: float, ts: float) -> None:
@@ -127,11 +131,17 @@ class Engine:
         return st
 
     async def _try_capture_open(self, st: WindowState) -> None:
-        if st.s_open is not None or st.warmup:
+        if st.s_open is not None:
             return
+        # Also attempted for the cold-start (warmup) window: the RTDS backlog
+        # reaches ~70s back, so starting mid-window often still recovers S_open.
         got = self.oracle.price_at(st.window_ts, tolerance_s=3)
         if got:
             st.s_open, st.s_open_src_ts = got
+            if st.warmup:
+                st.warmup = False
+                self.store.log_event("WARMUP_RECOVERED", json.dumps(
+                    {"window_ts": st.window_ts, "s_open": st.s_open}))
             self.store.upsert_window(st.window_ts, self.mode,
                                      s_open=st.s_open,
                                      source_open="rtds_chainlink_btc_usd")
@@ -244,6 +254,31 @@ class Engine:
         self.store.log_event("WINDOW_CLOSE", json.dumps(
             {"window_ts": st.window_ts, "outcome": outcome, "s_close": s_close}))
 
+    # ---- health: heartbeat (uptime evidence) + feed-down alerts ---------------
+    async def _health_check(self, now: float) -> None:
+        feeds = {
+            "binance": self.binance.price is not None and now - self.binance.ts < 10,
+            "oracle": self.oracle.latest_ts > 0 and int(now) - self.oracle.latest_ts < 30,
+        }
+        if now - self._last_heartbeat >= 60:
+            self._last_heartbeat = now
+            self.store.log_event("HEARTBEAT", json.dumps(
+                {"feeds": feeds, "window_ts": self.window.window_ts if self.window else None}))
+        for name, ok in feeds.items():
+            if ok:
+                self._feed_down_since.pop(name, None)
+            else:
+                since = self._feed_down_since.setdefault(name, now)
+                if now - since > 120 and now - self._last_feed_alert > 3600:
+                    self._last_feed_alert = now
+                    self.store.log_event("FEED_DOWN", name)
+                    for hook in self.alert_hooks:
+                        try:
+                            await hook(f"⚠️ פיד {name} מנותק כבר יותר מ-2 דקות — "
+                                       f"האיתותים מושהים עד שיתאושש")
+                        except Exception as e:
+                            log.warning("alert hook failed: %r", e)
+
     # ---- status for delivery/PWA ----------------------------------------------
     def status_payload(self) -> dict:
         st = self.window
@@ -253,6 +288,9 @@ class Engine:
             "ts": now, "mode": self.mode,
             "gate1": self.store.gate_green("GATE1"),
             "gate2": self.store.gate_green("GATE2"),
+            "day_pnl": self.risk.day_pnl(now),
+            "basis": (self.binance.price - self.oracle.latest
+                      if self.binance.price and self.oracle.latest else None),
             "feeds": {
                 "binance": self.binance.price is not None and now - self.binance.ts < 10,
                 "oracle": self.oracle.latest_ts > 0 and int(now) - self.oracle.latest_ts < 30,
@@ -296,6 +334,7 @@ class Engine:
                 st = self.window
                 await self._try_capture_open(st)
                 await self._poll_books(st)
+                await self._health_check(now)
                 # tick log (1 Hz)
                 s_est = self.spot_estimate()
                 up, down = st.book.get("up"), st.book.get("down")

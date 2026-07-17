@@ -53,7 +53,13 @@ class BinanceSpot:
         async with websockets.connect(url, open_timeout=10, ping_interval=20) as ws:
             log.info("binance connected: %s", url)
             self._host_i -= 1  # success: stay on this host next time
-            async for msg in ws:
+            while True:
+                # stall watchdog: BTCUSDT never goes 30s without a trade; a
+                # silent-but-open socket must be treated as dead
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=30)
+                except asyncio.TimeoutError:
+                    raise ConnectionError("binance stall: no trade for 30s")
                 d = json.loads(msg)
                 p = float(d["p"])
                 ts = d["T"] / 1000.0
@@ -152,6 +158,10 @@ class OracleFeed:
                 if time.time() - last_sub >= self.resubscribe_s:
                     await ws.send(sub)
                     last_sub = time.time()
+                # stall watchdog: resubscribes should refresh the backlog every
+                # ~10s; a minute with no new point means the stream is dead
+                if self.latest_ts and time.time() - self.latest_ts > 60:
+                    raise ConnectionError("oracle stall: no new point for 60s")
 
     async def run(self):
         await _reconnect_loop("oracle", self._connect_once, self.stop)

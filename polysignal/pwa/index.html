@@ -51,6 +51,8 @@
     <div class="cell"><div class="l">Edge</div><div class="v" id="edge">–</div></div>
     <div class="cell"><div class="l">Ask ‏Up / Down</div><div class="v" id="asks">– / –</div></div>
     <div class="cell"><div class="l">ספוט / פתיחה</div><div class="v" id="spot">–</div></div>
+    <div class="cell"><div class="l">PnL היום</div><div class="v" id="pnl">–</div></div>
+    <div class="cell"><div class="l">בסיס Binance−אורקל</div><div class="v" id="basis">–</div></div>
   </div>
   <div id="feeds"></div>
 <script>
@@ -97,21 +99,34 @@ function render() {
   $("asks").textContent = (p.ask_up ?? "–") + " / " + (p.ask_down ?? "–");
   $("spot").textContent = (p.s_est ? p.s_est.toFixed(0) : "–") + " / " +
                           (p.s_open ? p.s_open.toFixed(0) : "–");
+  $("pnl").textContent = p.day_pnl == null ? "–" :
+      (p.day_pnl >= 0 ? "+" : "") + "$" + p.day_pnl.toFixed(2);
+  $("pnl").style.color = p.day_pnl > 0 ? "var(--up)" : p.day_pnl < 0 ? "var(--down)" : "";
+  $("basis").textContent = p.basis == null ? "–" :
+      (p.basis >= 0 ? "+" : "") + "$" + p.basis.toFixed(1);
   const drift = (Date.now() / 1000) - p.ts;
   $("count").textContent = fmtCount((p.t_remaining ?? 0) - Math.max(0, drift));
   $("feeds").innerHTML = "binance<span class='dot " + (p.feeds?.binance ? "ok" : "bad") +
       "'></span> oracle<span class='dot " + (p.feeds?.oracle ? "ok" : "bad") + "'></span>";
 }
 
+let ws = null;
 function connect() {
-  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
-                           location.host + "/ws");
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
+                     location.host + "/ws");
   ws.onmessage = e => { last = JSON.parse(e.data); lastMsgAt = Date.now(); };
   ws.onclose = () => setTimeout(connect, 1500);
   ws.onerror = () => ws.close();
 }
 connect();
 setInterval(render, 250);
+// mobile: after screen-lock the socket may be dead but look open — on refocus
+// force a reconnect if no fresh frame arrived
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && Date.now() - lastMsgAt > 3000 && ws) {
+    try { ws.close(); } catch (e) {}
+  }
+});
 </script>
 </body>
 </html>
