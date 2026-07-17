@@ -140,6 +140,7 @@ class OracleFeed:
             log.info("oracle RTDS connected")
             await ws.send(sub)
             last_sub = time.time()
+            last_ping = time.time()
             conn_started = time.time()
             while not self.stop.is_set():
                 # stall watchdog FIRST, so it also runs on the recv-timeout and
@@ -147,6 +148,10 @@ class OracleFeed:
                 # connection that never delivered a single point
                 if time.time() - max(self.latest_ts, conn_started) > 60:
                     raise ConnectionError("oracle stall: no new point for 60s")
+                # the RTDS docs require a PING every 5s to keep the connection
+                if time.time() - last_ping >= 5:
+                    await ws.send("PING")
+                    last_ping = time.time()
                 try:
                     msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
                 except asyncio.TimeoutError:
@@ -174,12 +179,102 @@ class OracleFeed:
         await _reconnect_loop("oracle", self._connect_once, self.stop)
 
 
-class BookPoller:
-    """CLOB REST /book poller for the active window's two tokens (1 Hz).
+class ClobBookWS:
+    """Official CLOB market channel (docs.polymarket.com) — real-time books.
 
-    Simple and robust for a 15-120s signal band; the CLOB WS can replace this
-    for the M6 bot where milliseconds matter.
+    Live probe: ~10K price_change + ~500 best_bid_ask events per 45s vs our
+    1Hz polling. Subscribes per window with both token ids and
+    custom_feature_enabled, which also delivers market_resolved — the
+    official on-chain outcome. Writes straight into the WindowState.
     """
+
+    def __init__(self, url: str):
+        self.url = url
+
+    async def run_window(self, market, st, keep_until: float) -> None:
+        """Feed st.book/st.book_at/st.official_outcome until keep_until
+        (kept past window close to catch market_resolved)."""
+        ids = [market.token_id_up, market.token_id_down]
+        sub = json.dumps({"assets_ids": ids, "type": "market",
+                          "custom_feature_enabled": True})
+        backoff = 1.0
+        while time.time() < keep_until:
+            try:
+                async with websockets.connect(self.url, open_timeout=10) as ws:
+                    await ws.send(sub)
+                    backoff = 1.0
+                    last_ping = time.time()
+                    while time.time() < keep_until:
+                        if time.time() - last_ping >= 10:
+                            await ws.send("PING")
+                            last_ping = time.time()
+                        try:
+                            msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                        except asyncio.TimeoutError:
+                            continue
+                        if isinstance(msg, str) and msg.strip().upper() == "PONG":
+                            continue
+                        try:
+                            arr = json.loads(msg)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                        for ev in (arr if isinstance(arr, list) else [arr]):
+                            if isinstance(ev, dict):
+                                self._apply(ev, market, st, ids)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.debug("clob ws reconnect: %r", e)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 10.0)
+
+    @staticmethod
+    def _apply(ev: dict, market, st, ids: list[str]) -> None:
+        et = ev.get("event_type")
+
+        def side_of(aid):
+            return "up" if aid == ids[0] else "down" if aid == ids[1] else None
+
+        if et == "book":
+            side = side_of(ev.get("asset_id"))
+            if side:
+                st.book[side] = BookPoller.top(ev)
+                st.book_at = time.time()
+        elif et == "best_bid_ask":
+            side = side_of(ev.get("asset_id"))
+            if side:
+                prev = st.book.get(side) or (None, None, 0.0, 0.0)
+                try:
+                    st.book[side] = (float(ev["best_bid"]), float(ev["best_ask"]),
+                                     prev[2], prev[3])
+                    st.book_at = time.time()
+                except (KeyError, ValueError, TypeError):
+                    pass
+        elif et == "price_change":
+            for pc in ev.get("price_changes", []):
+                side = side_of(pc.get("asset_id"))
+                if not side:
+                    continue
+                prev = st.book.get(side) or (None, None, 0.0, 0.0)
+                try:
+                    bb = float(pc["best_bid"]) if pc.get("best_bid") else prev[0]
+                    ba = float(pc["best_ask"]) if pc.get("best_ask") else prev[1]
+                    st.book[side] = (bb, ba, prev[2], prev[3])
+                    st.book_at = time.time()
+                except (ValueError, TypeError):
+                    pass
+        elif et == "market_resolved":
+            # official outcome — the channel broadcasts these globally, so
+            # filter hard on our own market
+            if ev.get("market") == market.condition_id \
+                    and ev.get("winning_asset_id") in ids:
+                st.official_outcome = ("UP" if ev["winning_asset_id"] == ids[0]
+                                       else "DOWN")
+
+
+class BookPoller:
+    """CLOB REST /book poller — the FALLBACK book source when the official
+    market-channel websocket (ClobBookWS) is stale or down."""
 
     def __init__(self, base: str, session: aiohttp.ClientSession | None = None):
         self.base = base.rstrip("/")

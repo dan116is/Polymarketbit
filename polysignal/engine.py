@@ -18,7 +18,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from .feeds import BinanceSpot, BookPoller, OracleFeed
+from .feeds import BinanceSpot, BookPoller, ClobBookWS, OracleFeed
 from .gamma import GammaClient, Market
 from .quant import EwmaVol, Signal, evaluate, taker_fee_per_share
 from .risk import RiskManager
@@ -43,6 +43,8 @@ class WindowState:
     signal_ask: float | None = None
     exec_ask: float | None = None
     book: dict = field(default_factory=dict)  # side -> (bid, ask, bdepth, adepth)
+    book_at: float = 0.0                      # last live book update (any source)
+    official_outcome: str | None = None       # from CLOB market_resolved event
     outcome: str | None = None
 
 
@@ -58,6 +60,7 @@ class Engine:
         rt = cfg["runtime"]
         self.gamma = GammaClient(rt["gamma_base"])
         self.books = BookPoller(rt["clob_base"])
+        self.clob_ws = ClobBookWS(rt["clob_ws"])
         self.oracle = OracleFeed(rt["rtds_ws"])
         self.vol = EwmaVol(cfg["model"]["sigma_halflife_s"],
                            cfg["model"]["sigma_floor"])
@@ -158,7 +161,14 @@ class Engine:
                 {"window_ts": win, "slug": slug,
                  "detect_latency_s": round(time.time() - win, 3),
                  "fee_bps": st.market.taker_base_fee_bps}))
+            self._start_clob_ws(st)
         return st
+
+    def _start_clob_ws(self, st: WindowState) -> None:
+        """Real-time books via the official market channel; runs 150s past
+        the window close to catch the market_resolved (official outcome)."""
+        keep_until = st.window_ts + self.cfg["runtime"]["window_seconds"] + 150
+        self._spawn(self.clob_ws.run_window(st.market, st, keep_until))
 
     async def _retry_market(self, st: WindowState, now: float) -> None:
         """Keep re-fetching a missing market (rate-limited) instead of burning
@@ -176,6 +186,7 @@ class Engine:
                 {"window_ts": st.window_ts, "slug": slug,
                  "detect_latency_s": round(now - st.window_ts, 3),
                  "fee_bps": st.market.taker_base_fee_bps, "late": True}))
+            self._start_clob_ws(st)
         elif now - st.window_ts > 30 and not getattr(st, "_miss_logged", False):
             st._miss_logged = True
             self.store.log_event("WINDOW_MISS", json.dumps(
@@ -199,7 +210,9 @@ class Engine:
                                      source_open="rtds_chainlink_btc_usd")
 
     async def _poll_books(self, st: WindowState) -> None:
-        if not st.market:
+        # REST fallback only — the CLOB websocket normally keeps the book
+        # fresher than any polling could
+        if not st.market or time.time() - st.book_at < 4:
             return
         bu, bd = await asyncio.gather(
             self.books.book(st.market.token_id_up),
@@ -208,6 +221,8 @@ class Engine:
             st.book["up"] = BookPoller.top(bu)
         if bd:
             st.book["down"] = BookPoller.top(bd)
+        if bu or bd:
+            st.book_at = time.time()
 
     def _evaluate(self, st: WindowState, now: float) -> Signal | None:
         if st.warmup or st.s_open is None or not st.market:
@@ -305,16 +320,24 @@ class Engine:
         """Resolve outcome from the oracle open/close; log pnl for signals."""
         win_end = st.window_ts + self.cfg["runtime"]["window_seconds"]
         # oracle close: wait up to 120s (the RTDS backlog depth) — a window
-        # resolved on-chain must not silently drop out of risk accounting
+        # resolved on-chain must not silently drop out of risk accounting.
+        # The CLOB market_resolved event (official outcome) can land earlier
+        # or later; prefer it whenever it arrives.
         s_close = None
         for _ in range(120):
+            if st.official_outcome:
+                break
             got = self.oracle.price_at(win_end, tolerance_s=3)
             if got:
                 s_close = got[0]
                 break
             await asyncio.sleep(1)
         outcome = None
-        if s_close is not None and st.s_open is not None:
+        if st.official_outcome:
+            outcome = st.official_outcome
+            self.store.log_event("OFFICIAL_RESOLUTION", json.dumps(
+                {"window_ts": st.window_ts, "outcome": outcome}))
+        elif s_close is not None and st.s_open is not None:
             outcome = "UP" if s_close >= st.s_open else "DOWN"
         elif st.signal and st.signal.side in ("UP", "DOWN"):
             self.store.log_event("UNRESOLVED_WINDOW", json.dumps(
@@ -352,6 +375,10 @@ class Engine:
         self.store.upsert_window(st.window_ts, self.mode, **fields)
         self.store.log_event("WINDOW_CLOSE", json.dumps(
             {"window_ts": st.window_ts, "outcome": outcome, "s_close": s_close}))
+        # oracle-compare can differ from the official resolution exactly in the
+        # tie/basis edge cases — keep listening and correct the record if so
+        if outcome and not st.official_outcome and st.signal:
+            self._spawn(self._verify_official(st, outcome, pnl))
         # close the loop for the user: outcome back to phone + PWA strip
         if st.signal and st.signal.side in ("UP", "DOWN") and outcome:
             won = st.signal.side == outcome
@@ -368,6 +395,43 @@ class Engine:
                     await hook(msg)
                 except Exception as e:
                     log.warning("alert hook failed: %r", e)
+
+    async def _verify_official(self, st: WindowState, oracle_outcome: str,
+                               old_pnl: float | None) -> None:
+        """If the official market_resolved event later disagrees with the
+        oracle-compare outcome, correct the record and the risk accounting."""
+        deadline = st.window_ts + self.cfg["runtime"]["window_seconds"] + 150
+        while time.time() < deadline and not st.official_outcome:
+            await asyncio.sleep(5)
+        if not st.official_outcome or st.official_outcome == oracle_outcome:
+            return
+        outcome = st.official_outcome
+        fields: dict = {"outcome": outcome}
+        new_pnl = None
+        if st.signal and st.signal.side in ("UP", "DOWN") and old_pnl is not None:
+            ask = st.exec_ask if st.exec_ask is not None else st.signal_ask
+            if ask and 0 < ask < 1 and st.market:
+                stake = st.signal.stake_usd
+                shares = stake / ask
+                fee = taker_fee_per_share(ask, st.market.taker_base_fee_bps) * shares
+                new_pnl = (shares * (1 - ask) - fee if st.signal.side == outcome
+                           else -stake - fee)
+                fields["pnl"] = round(new_pnl, 4)
+                row = self.store.get_window(st.window_ts, self.mode)
+                acted = bool(row and row.get("acted"))
+                if self.mode == "PAPER" or (self.mode == "LIVE" and acted):
+                    self.risk.add_pnl(new_pnl - old_pnl,
+                                      now=float(st.window_ts + 300))
+        self.store.upsert_window(st.window_ts, self.mode, **fields)
+        self.store.log_event("OUTCOME_CORRECTED", json.dumps(
+            {"window_ts": st.window_ts, "from": oracle_outcome, "to": outcome}))
+        for hook in self.alert_hooks:
+            try:
+                await hook(f"⚠️ תיקון תוצאה לחלון "
+                           f"{time.strftime('%H:%M', time.gmtime(st.window_ts))}: "
+                           f"התוצאה הרשמית היא {outcome} (לא {oracle_outcome})")
+            except Exception as e:
+                log.warning("alert hook failed: %r", e)
 
     # ---- health: heartbeat (uptime evidence) + feed-down alerts ---------------
     async def _health_check(self, now: float) -> None:
