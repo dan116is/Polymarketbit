@@ -32,6 +32,16 @@
   #feeds { font-size:12px; color:var(--dim); }
   .dot { display:inline-block; width:8px; height:8px; border-radius:4px; margin:0 3px 0 10px; }
   .ok { background:var(--up); } .bad { background:var(--down); }
+  #rounds { width:100%; max-width:430px; font-size:15px; letter-spacing:2px;
+            direction:ltr; text-align:center; color:var(--dim); }
+  #rounds .u { color:var(--up); } #rounds .d { color:var(--down); }
+  button.ps { background:var(--card); color:var(--fg); border:1px solid #2b3245;
+              border-radius:14px; padding:11px 22px; font-size:15px; }
+  #panel { width:100%; max-width:430px; display:flex; flex-direction:column; gap:8px; }
+  .hrow { display:flex; justify-content:space-between; align-items:center;
+          background:var(--card); border-radius:10px; padding:8px 12px; font-size:13px; }
+  .hrow .t { color:var(--dim); font-variant-numeric:tabular-nums; }
+  .hrow .win { color:var(--up); } .hrow .lose { color:var(--down); }
   #disclaimer { font-size:11px; color:var(--warn); text-align:center; max-width:430px; }
 </style>
 </head>
@@ -55,17 +65,28 @@
     <div class="cell"><div class="l">רווח/הפסד היום (תרגול)</div><div class="v" id="pnl">$0.00</div></div>
     <div class="cell"><div class="l">איתותים היום</div><div class="v" id="sigcount">0</div></div>
   </div>
+  <div id="rounds"></div>
   <div id="feeds"></div>
-  <div id="history" style="width:100%;max-width:430px;font-size:12px;color:var(--dim)"></div>
+  <button class="ps" id="histbtn">📊 היסטוריה מלאה</button>
+  <div id="panel" hidden>
+    <div class="grid">
+      <div class="cell"><div class="l">סה"כ איתותים (תרגול)</div><div class="v" id="st_n">0</div></div>
+      <div class="cell"><div class="l">אחוז הצלחה</div><div class="v" id="st_hit">–</div></div>
+      <div class="cell"><div class="l">רווח/הפסד מצטבר</div><div class="v" id="st_pnl">$0.00</div></div>
+      <div class="cell"><div class="l">רצף נוכחי</div><div class="v" id="st_streak">–</div></div>
+    </div>
+    <div id="histlist"></div>
+    <button class="ps" id="csvbtn">📤 ייצוא הכול (CSV)</button>
+  </div>
   <div id="disclaimer">מסך תרגול בלבד — שום דבר כאן הוא לא המלצה לכסף אמיתי.
     מסחר אמיתי נשאר נעול עד ששתי בדיקות האיכות של המערכת יעברו בירוק.</div>
 <script>
 "use strict";
 /* POLYSIGNAL standalone monitor — the whole engine in the browser.
-   Same math as polysignal/quant.py; data straight from the public APIs:
-   Gamma (market meta), CLOB REST (books), RTDS WS (Chainlink oracle),
-   Binance WS (low-latency spot proxy). Stake ladder capped at $2 because
-   GATE 2 is not green; this build recommends nothing — it displays. */
+   Same math as polysignal/quant.py; official Polymarket channels:
+   Gamma (market meta), CLOB market-channel WS (real-time books + official
+   resolutions), RTDS WS (Chainlink oracle), Binance WS (spot proxy).
+   Stake ladder capped at $2 because GATE 2 is not green; PAPER display only. */
 
 const CFG = {
   windowSeconds: 300,
@@ -108,11 +129,12 @@ function stakeFromEdge(net, step){ // gate2 not green -> $5 tier capped to $2
 
 // ---------- state ----------
 const S = {
-  win: null, market: null, sOpen: null, warmupWin: null,
+  win: null, market: null, nextMarket: null, sOpen: null, warmupWin: null,
   oracle: new Map(), oracleLatestTs: 0,
   binance: null, binanceTs: 0, binHist: [],
   vol: new EwmaVol(CFG.sigmaHalflifeS, CFG.sigmaFloor),
   book: {up: null, down: null},   // [bid, ask, bidSz, askSz]
+  bookAt: 0,
   signal: null, // locked signal for this window
   feeds: {oracle: false, binance: false},
   lastDataAt: Date.now()/1000 + 12,  // boot grace: show "connecting", not OFFLINE
@@ -120,8 +142,59 @@ const S = {
 
 const nowS = () => Date.now()/1000;
 const windowTs = t => Math.floor((t ?? nowS())/CFG.windowSeconds)*CFG.windowSeconds;
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
-// ---------- fetch with CORS fallback to Netlify proxy ----------
+// ---------- documented history: signals (H) + every round (R) ----------
+// In-memory caches, persisted to localStorage — no JSON.parse on the render path.
+function loadLS(k){ try{return JSON.parse(localStorage[k]||"[]")}catch(e){return []} }
+let H = loadLS("ps_history");   // signals: win, side, stake, ask, edge, pFair, tau, sOpen, sClose, outcome, pnl, official
+let R = loadLS("ps_rounds");    // every round: win, sOpen, sClose, o (1=UP)
+const saveH = () => { H = H.slice(-200); localStorage.ps_history = JSON.stringify(H); };
+const saveR = () => { R = R.slice(-288); localStorage.ps_rounds = JSON.stringify(R); };
+const dayStart = () => Math.floor(nowS()/86400)*86400;
+const dayPnl = () => H.reduce((s,e)=>(e.win>=dayStart() && e.pnl!=null)?s+e.pnl:s, 0);
+
+async function resolveRound(win, sOpen){
+  if(sOpen==null || R.some(r=>r.win===win)) return;
+  let sClose=null;
+  for(let i=0;i<40 && sClose==null;i++){ sClose=oracleAt(win+CFG.windowSeconds); if(sClose==null) await sleep(1000); }
+  if(sClose==null) return;
+  R.push({win, sOpen:+sOpen.toFixed(2), sClose:+sClose.toFixed(2), o: sClose>=sOpen?1:0});
+  R.sort((a,b)=>a.win-b.win); saveR();
+}
+
+async function resolveWindow(win, sOpen, sig, feeBps){
+  if(!sig || sOpen==null || H.some(e=>e.win===win)) return;
+  let sClose=null;
+  for(let i=0;i<40 && sClose==null;i++){ sClose=oracleAt(win+CFG.windowSeconds); if(sClose==null) await sleep(1000); }
+  if(sClose==null) return;
+  const outcome = sClose>=sOpen ? "UP" : "DOWN";
+  const a = sig.ask, shares = sig.stake/a, fee = feePerShare(a,feeBps)*shares;
+  const pnl = sig.side===outcome ? shares*(1-a)-fee : -sig.stake-fee;
+  H.push({win, side:sig.side, stake:sig.stake, ask:a,
+          edge:+(sig.edge??0).toFixed(4), pFair:+(sig.pFair??0).toFixed(3),
+          tau:Math.round(sig.tau??0), sOpen:+sOpen.toFixed(2), sClose:+sClose.toFixed(2),
+          outcome, pnl:+pnl.toFixed(3), official:false});
+  H.sort((a2,b2)=>a2.win-b2.win); saveH();
+}
+
+// official resolution correction: fix the logs if they disagree
+function applyOfficial(win, official, feeBps){
+  const r = R.find(x=>x.win===win);
+  if(r && r.o !== (official==="UP"?1:0)){ r.o = official==="UP"?1:0; saveR(); }
+  const e = H.find(x=>x.win===win);
+  if(e){
+    e.official = true;
+    if(e.outcome !== official){
+      const a=e.ask, shares=e.stake/a, fee=feePerShare(a,feeBps)*shares;
+      e.outcome = official;
+      e.pnl = +((e.side===official ? shares*(1-a)-fee : -e.stake-fee)).toFixed(3);
+    }
+    saveH();
+  }
+}
+
+// ---------- fetch with CORS fallback to proxy ----------
 async function apiGet(bases, path){
   for(const b of bases){
     try{
@@ -132,7 +205,7 @@ async function apiGet(bases, path){
   return null;
 }
 
-// ---------- Gamma: market per window ----------
+// ---------- Gamma: market per window (+ prefetch of the NEXT window) ----------
 async function loadMarket(win){
   const arr = await apiGet(CFG.gammaBases, `/markets?slug=${CFG.slugPrefix}-${win}`);
   if(!arr || !arr.length) return null;
@@ -197,18 +270,8 @@ function handleClobEvent(m, myWin, mkt, ids){
     S.bookAt = nowS(); S.lastDataAt = nowS();
   }
 }
-// official resolution correction: fix the paper-log entry if it disagrees
-function applyOfficial(win, official, feeBps){
-  const h = history();
-  const i = h.findIndex(e=>e.win===win);
-  if(i<0 || h[i].outcome===official) return;
-  const e = h[i], a = e.ask, shares = e.stake/a, fee = feePerShare(a,feeBps)*shares;
-  e.outcome = official;
-  e.pnl = +((e.side===official ? shares*(1-a)-fee : -e.stake-fee)).toFixed(3);
-  saveHistory(h);
-}
 
-// ---------- CLOB books ----------
+// ---------- CLOB books (REST fallback) ----------
 function topOfBook(book){
   const bids=book.bids||[], asks=book.asks||[];
   let bb=null, ba=null;
@@ -219,7 +282,6 @@ function topOfBook(book){
   return [bb, ba, bSz, aSz];
 }
 async function pollBooks(){
-  // REST fallback only — the CLOB websocket keeps the book fresher
   if(!S.market || (S.bookAt && nowS()-S.bookAt < 4)) return;
   const [bu, bd] = await Promise.all([
     apiGet(CFG.clobBases, `/book?token_id=${S.market.tokenUp}`),
@@ -230,17 +292,18 @@ async function pollBooks(){
 }
 
 // ---------- RTDS oracle (Chainlink btc/usd) ----------
+const ORACLE_SUB = JSON.stringify({action:"subscribe", subscriptions:[
+  {topic:"crypto_prices_chainlink", type:"*", filters: JSON.stringify({symbol:"btc/usd"})}]});
+function refreshOracle(){ try{S.oracleWs && S.oracleWs.send(ORACLE_SUB)}catch(e){} }
 function connectOracle(){
   let ws;
-  const sub = JSON.stringify({action:"subscribe", subscriptions:[
-    {topic:"crypto_prices_chainlink", type:"*", filters: JSON.stringify({symbol:"btc/usd"})}]});
   const open = () => {
     ws = new WebSocket(CFG.rtdsWs);
     S.oracleWs = ws;
     let resubTimer, pingTimer;
     ws.onopen = () => {
-      ws.send(sub);
-      resubTimer=setInterval(()=>{try{ws.send(sub)}catch(e){}}, 10000);
+      ws.send(ORACLE_SUB);
+      resubTimer=setInterval(()=>{try{ws.send(ORACLE_SUB)}catch(e){}}, 10000);
       // the RTDS docs require a PING every 5s to keep the connection
       pingTimer=setInterval(()=>{try{ws.send("PING")}catch(e){}}, 5000);
     };
@@ -306,30 +369,8 @@ function spotEstimate(){ // oracle anchor + binance delta: basis cancels
   return (bNow!=null && bThen!=null) ? anchor+(bNow-bThen) : anchor;
 }
 
-// ---------- paper history (localStorage) ----------
-function history(){ try{return JSON.parse(localStorage.ps_history||"[]")}catch(e){return []} }
-function saveHistory(h){ localStorage.ps_history = JSON.stringify(h.slice(-100)); }
-function dayPnl(){
-  const day0 = Math.floor(nowS()/86400)*86400;
-  return history().filter(e=>e.win>=day0 && e.pnl!=null).reduce((s,e)=>s+e.pnl,0);
-}
-async function resolveWindow(win, sOpen, sig, feeBps){
-  if(!sig || sOpen==null) return;
-  let sClose=null;
-  for(let i=0;i<30 && sClose==null;i++){ sClose=oracleAt(win+CFG.windowSeconds); if(sClose==null) await sleep(1000); }
-  if(sClose==null) return;
-  const outcome = sClose>=sOpen ? "UP" : "DOWN";
-  const a = sig.ask, shares = sig.stake/a, fee = feePerShare(a,feeBps)*shares;
-  const pnl = sig.side===outcome ? shares*(1-a)-fee : -sig.stake-fee;
-  const h = history(); h.push({win, side:sig.side, stake:sig.stake, ask:a,
-                              outcome, pnl:+pnl.toFixed(3)});
-  saveHistory(h);
-}
-
 // ---------- window lifecycle + evaluation ----------
 function restorePending(){
-  // reload/boot: restore a signal locked earlier — current window's comes
-  // back live; an older one gets resolved via the oracle backlog if possible
   let p; try{ p = JSON.parse(localStorage.ps_pending||"null"); }catch(e){ return; }
   if(!p || !p.sig) return;
   if(p.win === windowTs()){
@@ -346,12 +387,23 @@ async function windowLoop(){
   for(;;){
     const win = windowTs();
     if(S.win!==win){
-      if(S.win!==null && S.signal)  // resolve the finished window in background
-        resolveWindow(S.win, S.sOpen, S.signal, S.market?S.market.feeBps:0);
+      if(S.win!==null){
+        // document EVERY finished round, and the signal if there was one
+        resolveRound(S.win, S.sOpen);
+        if(S.signal) resolveWindow(S.win, S.sOpen, S.signal, S.market?S.market.feeBps:0);
+      }
       delete localStorage.ps_pending;
-      S.win=win; S.market=null; S.sOpen=null; S.signal=null;
+      S.win=win; S.sOpen=null; S.signal=null;
       S.book={up:null,down:null}; S.bookAt=0;
-      for(let i=0;i<10 && !S.market;i++){ S.market = await loadMarket(win); if(!S.market) await sleep(600); }
+      refreshOracle();  // pull a fresh backlog right at the boundary
+      // instant rollover: use the prefetched market when we have it
+      if(S.nextMarket && S.nextMarket.win===win){
+        S.market = S.nextMarket.m;
+      } else {
+        S.market = null;
+        for(let i=0;i<10 && !S.market;i++){ S.market = await loadMarket(win); if(!S.market) await sleep(600); }
+      }
+      S.nextMarket = null;
       if(S.market) connectClob();
     }
     // cold-start: the oracle backlog reaches ~70s back, so even the first
@@ -360,17 +412,21 @@ async function windowLoop(){
       S.sOpen = oracleAt(win);
       if(S.sOpen!=null && win===S.warmupWin) S.warmupWin = -1;
     }
+    // prefetch the NEXT window's market ~25s early → zero-delay rollover
+    const tLeft = win + CFG.windowSeconds - nowS();
+    if(!S.nextMarket && tLeft < 25){
+      loadMarket(win+CFG.windowSeconds).then(m=>{ if(m) S.nextMarket={win:win+CFG.windowSeconds, m}; });
+    }
     await pollBooks();
     evaluate();
-    await sleep(1200);
+    // fast cadence while the round is young or open price still missing
+    await sleep((S.sOpen==null || nowS()-win<20) ? 400 : 1000);
   }
 }
-const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
 function evaluate(){
   if(S.signal || !S.market || S.sOpen==null || !S.vol.ready()) return;
-  // never lock a signal on a stale book (background tab, failed polls)
-  if(!S.bookAt || nowS()-S.bookAt > 5) return;
+  if(!S.bookAt || nowS()-S.bookAt > 5) return;  // never lock on a stale book
   const sEst = spotEstimate(); if(sEst==null) return;
   const tau = S.win+CFG.windowSeconds-nowS();
   if(tau<CFG.bandS[0] || tau>CFG.bandS[1]) return;
@@ -389,18 +445,41 @@ function evaluate(){
   while(stake>0 && stake>depth) stake = stake===2?1:0;
   if(stake<=0) return;
   S.signal = {side, stake, edge, ask, pFair:pf, tau, at:nowS()};
-  // survive a background-tab reload: the locked signal must not vanish from
-  // the paper log or re-fire differently in the same window
   localStorage.ps_pending = JSON.stringify({win:S.win, sOpen:S.sOpen,
       feeBps:S.market.feeBps, sig:S.signal});
   if(navigator.vibrate) navigator.vibrate([120,60,120]);
+  beep();
+  notifySignal(S.signal);
+}
+
+// ---------- alerts: sound + notification when in background ----------
+let audioCtx = null;
+function beep(){
+  try{
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.frequency.value=880; g.gain.value=0.07;
+    o.start(); o.stop(audioCtx.currentTime+0.18);
+  }catch(e){}
+}
+function notifySignal(sig){
+  try{
+    if(document.hidden && "Notification" in window && Notification.permission==="granted")
+      new Notification("POLYSIGNAL — "+SIDE_HE[sig.side],
+        {body:`$${sig.stake} · פער ${(sig.edge*100).toFixed(1)}¢ · נותרו ${Math.round(sig.tau)} שניות`,
+         tag:"ps-signal"});
+  }catch(e){}
 }
 
 // ---------- render ----------
 const $ = id => document.getElementById(id);
+const SIDE_HE = {UP: "עלייה", DOWN: "ירידה", PASS: "ממתין"};
+const cents = p => p==null ? "–" : Math.round(p*100)+"¢";
+const hhmm = win => new Date(win*1000).toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
+
 function currentView(){
   if(S.signal) return S.signal;
-  // live (non-locking) evaluation for display only
   if(!S.market || S.sOpen==null || !S.vol.ready()) return null;
   const sEst=spotEstimate(); if(sEst==null) return null;
   const tau=S.win+CFG.windowSeconds-nowS(); if(tau<=0) return null;
@@ -413,8 +492,6 @@ function currentView(){
   }
   return {side:"PASS", stake:0, edge, pFair:pf, tau};
 }
-const SIDE_HE = {UP: "עלייה", DOWN: "ירידה", PASS: "ממתין"};
-const cents = p => p==null ? "–" : Math.round(p*100)+"¢";
 
 function render(){
   const stale = nowS()-S.lastDataAt > 8;
@@ -452,19 +529,68 @@ function render(){
   const dp = dayPnl();
   $("pnl").textContent = (dp>=0?"+$":"-$")+Math.abs(dp).toFixed(2);
   $("pnl").style.color = dp>0?"var(--up)":dp<0?"var(--down)":"";
-  const day0 = Math.floor(nowS()/86400)*86400;
-  $("sigcount").textContent = history().filter(e=>e.win>=day0).length;
-  const h = history().slice(-3).reverse();
-  $("history").innerHTML = h.length ? "האיתותים האחרונים: " + h.map(e =>
-      `${SIDE_HE[e.side]||e.side} $${e.stake} ${e.outcome===e.side?"✓ הצליח":"✗ פספס"} <span dir="ltr">${e.pnl>=0?"+":""}${e.pnl.toFixed(2)}$</span>`
-  ).join(" · ") : "";
+  $("sigcount").textContent = H.filter(e=>e.win>=dayStart()).length;
+  // last 24 rounds as an arrows strip — the market's recent rhythm at a glance
+  const rs = R.slice(-24);
+  $("rounds").innerHTML = rs.length ?
+      rs.map(r=>r.o?"<span class='u'>▲</span>":"<span class='d'>▼</span>").join("") : "";
+  if(!$("panel").hidden) renderPanel();
 }
+
+// ---------- full history panel ----------
+function renderPanel(){
+  const resolved = H.filter(e=>e.pnl!=null);
+  const wins = resolved.filter(e=>e.side===e.outcome).length;
+  const total = resolved.reduce((s,e)=>s+e.pnl,0);
+  $("st_n").textContent = resolved.length;
+  $("st_hit").textContent = resolved.length ? Math.round(100*wins/resolved.length)+"%" : "–";
+  $("st_pnl").textContent = (total>=0?"+$":"-$")+Math.abs(total).toFixed(2);
+  $("st_pnl").style.color = total>0?"var(--up)":total<0?"var(--down)":"";
+  let streak=0;
+  for(let i=resolved.length-1;i>=0;i--){
+    const w = resolved[i].side===resolved[i].outcome;
+    if(streak===0) streak = w?1:-1;
+    else if((streak>0)===w) streak += w?1:-1;
+    else break;
+  }
+  $("st_streak").textContent = streak===0?"–":(streak>0?streak+" ✓":(-streak)+" ✗");
+  $("histlist").innerHTML = H.slice(-30).reverse().map(e=>{
+    const won = e.outcome ? e.side===e.outcome : null;
+    return `<div class="hrow">
+      <span class="t">${hhmm(e.win)}</span>
+      <span>${SIDE_HE[e.side]} $${e.stake} @${Math.round(e.ask*100)}¢</span>
+      <span class="t">פער ${(e.edge*100).toFixed(1)}¢</span>
+      <span class="${won?"win":"lose"}" dir="ltr">${won==null?"⌛":(won?"✓":"✗")+" "+(e.pnl>=0?"+":"")+e.pnl.toFixed(2)+"$"}${e.official?" ®":""}</span>
+    </div>`;
+  }).join("") || "<div class='hrow'>עוד אין איתותים מתועדים</div>";
+}
+$("histbtn").addEventListener("click", ()=>{
+  $("panel").hidden = !$("panel").hidden;
+  $("histbtn").textContent = $("panel").hidden ? "📊 היסטוריה מלאה" : "סגור היסטוריה ✕";
+  if(!$("panel").hidden) renderPanel();
+});
+$("csvbtn").addEventListener("click", async ()=>{
+  const head = "window_utc,side,stake,entry_ask,edge,p_fair,tau_s,open,close,outcome,pnl,official\n";
+  const csv = head + H.map(e=>[new Date(e.win*1000).toISOString(),e.side,e.stake,e.ask,
+    e.edge??"",e.pFair??"",e.tau??"",e.sOpen??"",e.sClose??"",e.outcome??"",e.pnl??"",e.official?1:0].join(",")).join("\n");
+  try{
+    const f = new File([csv], "polysignal-history.csv", {type:"text/csv"});
+    if(navigator.canShare && navigator.canShare({files:[f]})){
+      await navigator.share({files:[f], title:"POLYSIGNAL history"});
+      return;
+    }
+  }catch(e){}
+  try{ await navigator.clipboard.writeText(csv);
+       $("csvbtn").textContent="הועתק ללוח ✓ (הדבק בגיליון)";
+       setTimeout(()=>$("csvbtn").textContent="📤 ייצוא הכול (CSV)", 2500);
+  }catch(e){}
+});
 
 connectOracle(); connectBinance(); windowLoop();
 setInterval(render, 250);
+
 // mobile: after screen-lock the sockets may be dead but look open — on
-// refocus recycle each stale feed independently (a half-open Binance socket
-// must not wait for the oracle to also die)
+// refocus recycle each stale feed independently
 document.addEventListener("visibilitychange", () => {
   if(document.hidden) return;
   if(nowS()-S.oracleLatestTs > 20){ try{S.oracleWs && S.oracleWs.close()}catch(e){} }
@@ -476,7 +602,7 @@ document.addEventListener("visibilitychange", () => {
   acquireWakeLock();
 });
 
-// keep the screen alive during a window (best effort; needs one user gesture)
+// keep the screen alive + unlock audio/notifications (needs one user gesture)
 let wakeLock = null;
 async function acquireWakeLock(){
   try{
@@ -484,7 +610,11 @@ async function acquireWakeLock(){
       wakeLock = await navigator.wakeLock.request("screen");
       wakeLock.addEventListener("release", () => { wakeLock = null; });
     }
-  }catch(e){ /* denied/unsupported — fine */ }
+  }catch(e){}
+  try{
+    if("Notification" in window && Notification.permission==="default")
+      Notification.requestPermission();
+  }catch(e){}
 }
 document.addEventListener("click", acquireWakeLock, {once:false});
 </script>
