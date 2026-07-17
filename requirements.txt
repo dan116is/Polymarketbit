@@ -12,3 +12,4 @@ huggingface_hub>=0.20
 # Tests
 pytest>=7.4
 pytest-asyncio>=0.23
+py-clob-client>=0.34

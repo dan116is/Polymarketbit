@@ -17,6 +17,12 @@
     "max_positions_per_window": 1,
     "stake5_requires_gate2": true
   },
+  "m6": {
+    "_comment": "armed נשאר false עד אישור סופי ידני של דניאל. הבוט מסרב לשלוח בלי: armed + GATE1B + GATE2B ירוקים + מפתח ב-env + אישור RISK.",
+    "armed": false,
+    "max_stake_usd": 1.0,
+    "shadow_enabled": true
+  },
   "runtime": {
     "db_path": "data/polysignal.sqlite",
     "window_seconds": 300,

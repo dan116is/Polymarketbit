@@ -67,6 +67,8 @@ class Engine:
         self._binance_hist: deque[tuple[float, float]] = deque(maxlen=1200)
         self.binance = BinanceSpot(rt["binance_ws_hosts"], on_price=self._on_binance)
         self.window: WindowState | None = None
+        self.executor = None       # ShadowExecutor (wired by run_engine)
+        self.live_executor = None  # LiveExecutor (gated; wired by run_engine)
         self.signal_hooks: list[SignalHook] = []
         self.status_hooks: list[SignalHook] = []
         self.alert_hooks: list[Callable[[str], Awaitable]] = []
@@ -294,6 +296,13 @@ class Engine:
         # optimistic 0s ask
         if st.market:
             self._spawn(self._sample_exec(st, sig))
+        # M6 shadow: full order build+sign (throwaway key, never sent) —
+        # measures the real bot latency; the gated live executor only ever
+        # fires when armed + both bot gates green + credentials + risk allow
+        if self.executor is not None and st.market:
+            self._spawn(self.executor.on_signal(st, sig, self.mode))
+        if self.live_executor is not None and st.market:
+            self._spawn(self.live_executor.fire(st, sig, self.mode))
 
     async def _sample_exec(self, st: WindowState, sig: Signal) -> None:
         """Edge-decay burst: the taken side's top-of-book at fixed offsets

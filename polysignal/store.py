@@ -56,10 +56,26 @@ CREATE TABLE IF NOT EXISTS risk_state (
 );
 
 CREATE TABLE IF NOT EXISTS gates (
-    gate       TEXT PRIMARY KEY CHECK (gate IN ('GATE1','GATE2')),
+    gate       TEXT PRIMARY KEY CHECK (gate IN ('GATE1','GATE2','GATE1B','GATE2B')),
     green      INTEGER NOT NULL,
     report     TEXT,
     updated_at REAL NOT NULL
+);
+
+-- M6 shadow executions: the full order pipeline WITHOUT sending. Measures the
+-- real signal->order-ready latency and the ask drift over it — the numbers the
+-- real-bot decision hinges on.
+CREATE TABLE IF NOT EXISTS shadow_execs (
+    window_ts     INTEGER NOT NULL,
+    mode          TEXT    NOT NULL,
+    side          TEXT    NOT NULL,
+    stake_usd     REAL    NOT NULL,
+    t_signal      REAL    NOT NULL,
+    build_ms      REAL,
+    ask_at_signal REAL,
+    ask_at_ready  REAL,
+    drift_cents   REAL,
+    PRIMARY KEY (window_ts, mode)
 );
 
 CREATE TABLE IF NOT EXISTS events (
