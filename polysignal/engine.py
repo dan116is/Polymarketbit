@@ -287,6 +287,22 @@ class Engine:
         st.signal_ts = now
         side_book = st.book.get(sig.side.lower())
         st.signal_ask = side_book[1] if side_book else None
+
+        # MONEY PATH FIRST — spawn the executors before ANY documentation work.
+        # An awaited Telegram POST (up to 5s timeout) or the SQLite writes must
+        # never sit between the decision and the order: at the measured ~1c/s
+        # decay even 200ms of Telegram RTT is real cents off every armed fire,
+        # and nothing here depends on those writes (executors read st directly).
+        if self.executor is not None and st.market:
+            self._spawn(self.executor.on_signal(st, sig, self.mode))
+        if self.live_executor is not None and st.market:
+            self._spawn(self.live_executor.fire(st, sig, self.mode))
+        if st.market:
+            self._spawn(self._sample_exec(st, sig))
+
+        # DOCUMENTATION PATH — DB row, audit log, phone/PWA alerts. Off the
+        # critical path now; the alert hooks are spawned too so a slow Telegram
+        # can't stall the 1Hz loop.
         up, down = st.book.get("up"), st.book.get("down")
         fee = taker_fee_per_share(st.signal_ask or 0.5,
                                   st.market.taker_base_fee_bps if st.market else 0.0)
@@ -306,22 +322,13 @@ class Engine:
              "tau_s": round(tau, 1)}))
         payload = self.status_payload()
         for hook in self.signal_hooks:
-            try:
-                await hook(payload)
-            except Exception as e:
-                log.warning("signal hook failed: %r", e)
-        # all modes: sample the executable ask over time (edge-decay evidence);
-        # the hand-latency sample prices the pnl so LIVE isn't booked at the
-        # optimistic 0s ask
-        if st.market:
-            self._spawn(self._sample_exec(st, sig))
-        # M6 shadow: full order build+sign (throwaway key, never sent) —
-        # measures the real bot latency; the gated live executor only ever
-        # fires when armed + both bot gates green + credentials + risk allow
-        if self.executor is not None and st.market:
-            self._spawn(self.executor.on_signal(st, sig, self.mode))
-        if self.live_executor is not None and st.market:
-            self._spawn(self.live_executor.fire(st, sig, self.mode))
+            self._spawn(self._run_hook(hook, payload))
+
+    async def _run_hook(self, hook, payload) -> None:
+        try:
+            await hook(payload)
+        except Exception as e:
+            log.warning("signal hook failed: %r", e)
 
     async def _sample_exec(self, st: WindowState, sig: Signal) -> None:
         """Edge-decay burst: the taken side's top-of-book at fixed offsets
