@@ -1,7 +1,9 @@
 """RISK — hard money rules. No model judgement, no overrides.
 
 - LIVE recommendations require GATE1 and GATE2 green in the store. Period.
-- Daily tracked loss <= -$10 (config) -> LIVE lock for 24h, persisted.
+- Daily tracked loss <= daily_stop_usd (config, currently -$40) -> LIVE lock
+  for 24h, persisted. (Raised from -$10 after the deep-improve analysis found
+  the tighter stop fired ~60% of days and discarded ~half the +EV bets.)
 - 2 consecutive tracked losses -> cooldown of N windows.
 - One recommended position per window.
 - Kill-switch flag (settable from Telegram) blocks everything until cleared.

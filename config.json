@@ -18,7 +18,7 @@
       5
     ],
     "ladder_step_cents": 4.0,
-    "daily_stop_usd": -10.0,
+    "daily_stop_usd": -40.0,
     "lock_hours": 24,
     "cooldown_windows_after_2_losses": 2,
     "max_positions_per_window": 1,
