@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>כלי האמת לפולימרקט</title>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --card2:#1c2430; --line:#2d3644;
+    --text:#e6edf3; --dim:#8b949e; --green:#3fb950; --red:#f85149;
+    --amber:#d29922; --blue:#58a6ff;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system, "Segoe UI", Roboto, "Heebo", Arial, sans-serif;
+    font-size:16px; line-height:1.5; padding:12px; max-width:640px; margin:0 auto;
+    padding-bottom:80px;
+  }
+  h1{font-size:1.35rem; margin-bottom:2px;}
+  h2{font-size:1.05rem; margin:18px 0 8px; color:var(--blue);}
+  .sub{color:var(--dim); font-size:.85rem; margin-bottom:14px;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px;}
+  .banner{
+    background:#1f1300; border:1px solid var(--amber); color:#f0c674;
+    border-radius:10px; padding:10px 12px; font-size:.85rem; margin-bottom:14px;
+  }
+  .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+  button{
+    background:var(--card2); color:var(--text); border:1px solid var(--line);
+    border-radius:10px; padding:10px 14px; font-size:.95rem; cursor:pointer;
+    font-family:inherit; -webkit-tap-highlight-color:transparent;
+  }
+  button:active{transform:scale(.97);}
+  button.primary{background:#1f6feb; border-color:#1f6feb; color:#fff; font-weight:600;}
+  button.danger{background:#3d1214; border-color:var(--red); color:var(--red);}
+  button.small{padding:6px 10px; font-size:.8rem;}
+  input, select{
+    background:var(--card2); color:var(--text); border:1px solid var(--line);
+    border-radius:10px; padding:10px 12px; font-size:1rem; width:100%;
+    font-family:inherit;
+  }
+  input:focus{outline:1px solid var(--blue);}
+  .num{font-variant-numeric:tabular-nums; direction:ltr; unicode-bidi:embed;}
+  .big{font-size:1.5rem; font-weight:700;}
+  .green{color:var(--green);} .red{color:var(--red);} .amber{color:var(--amber);} .dim{color:var(--dim);}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .kv{background:var(--card2); border-radius:10px; padding:10px; text-align:center;}
+  .kv .k{font-size:.72rem; color:var(--dim); margin-bottom:2px;}
+  .kv .v{font-size:1.15rem; font-weight:700;}
+  .warn{
+    background:#2d1215; border:1px solid var(--red); color:#ffb3ad;
+    border-radius:10px; padding:10px 12px; font-size:.9rem; margin-top:10px;
+  }
+  .result-item{
+    padding:10px 6px; border-bottom:1px solid var(--line); cursor:pointer; font-size:.92rem;
+  }
+  .result-item:last-child{border-bottom:none;}
+  .result-item .t{color:var(--dim); font-size:.78rem;}
+  .outcome-head{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;}
+  .tag{font-size:.72rem; border:1px solid var(--line); border-radius:999px; padding:2px 10px; color:var(--dim);}
+  .journal-item{border-bottom:1px solid var(--line); padding:10px 2px; font-size:.88rem;}
+  .journal-item:last-child{border-bottom:none;}
+  .statgrid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:8px;}
+  .hidden{display:none;}
+  .countdown{font-weight:700;}
+  .spin{color:var(--dim); font-size:.85rem; padding:8px 0;}
+  a{color:var(--blue);}
+  .verdict{margin-top:10px; padding:10px 12px; border-radius:10px; background:var(--card2); font-size:.9rem;}
+  label{font-size:.8rem; color:var(--dim); display:block; margin:8px 0 4px;}
+</style>
+</head>
+<body>
+
+<h1>🔎 כלי האמת לפולימרקט</h1>
+<p class="sub">מציג מה באמת אפשר לקבל — לא את המספר הירוק. בלי ניבויים, בלי הבטחות.</p>
+
+<div class="banner">
+  ⚠️ הכלי הזה <b>לא מנבא כלום</b> ולא ממליץ על הימורים. הוא מראה את ספר ההזמנות האמיתי
+  ועוזר לך לתעד החלטות <b>על הנייר</b> כדי שתראה נתונים אמיתיים לפני שאתה מסכן כסף.
+</div>
+
+<!-- ==================== FINDER ==================== -->
+<div class="card" id="finder">
+  <h2 style="margin-top:0">1. בחר שוק</h2>
+  <div class="row" style="margin-bottom:10px">
+    <button class="small" onclick="loadSeries('btc-up-or-down-5m','BTC 5 דקות')">₿ BTC 5 דקות</button>
+    <button class="small" onclick="loadSeries('eth-up-or-down-5m','ETH 5 דקות')">Ξ ETH 5 דקות</button>
+    <button class="small" onclick="loadSeries('btc-up-or-down-hourly','BTC שעתי')">₿ BTC שעתי</button>
+  </div>
+  <input id="searchBox" placeholder="חפש שוק או הדבק קישור מפולימרקט..."
+         onkeydown="if(event.key==='Enter')doSearch()">
+  <div class="row" style="margin-top:8px">
+    <button class="primary" onclick="doSearch()">חפש</button>
+  </div>
+  <div id="results"></div>
+</div>
+
+<!-- ==================== MARKET VIEW ==================== -->
+<div class="card hidden" id="marketView">
+  <div class="outcome-head">
+    <h2 style="margin:0" id="mTitle"></h2>
+  </div>
+  <div class="row" style="margin:6px 0 10px">
+    <span class="tag" id="mEnd"></span>
+    <span class="tag countdown" id="mCountdown"></span>
+    <span class="tag" id="mRefreshed"></span>
+  </div>
+  <div id="lastSecWarn"></div>
+  <div id="outcomes"></div>
+
+  <h2>מחשבון מכירה אמיתי</h2>
+  <label>כמה מניות יש לך?</label>
+  <input id="calcShares" type="number" inputmode="decimal" value="205" oninput="renderBooks()">
+  <div id="calcNote" class="dim" style="font-size:.78rem; margin-top:6px">
+    המחשבון עובר על ההצעות האמיתיות בספר ומחשב כמה דולרים תקבל בפועל אם תמכור עכשיו.
+  </div>
+
+  <h2>רשום החלטה על הנייר 📝</h2>
+  <div class="row" id="paperOutcomeBtns"></div>
+  <label>כמה מניות (בדמיון, בלי כסף)?</label>
+  <input id="paperShares" type="number" inputmode="decimal" value="100">
+  <div class="row" style="margin-top:10px">
+    <button class="primary" onclick="logPaperTrade()">רשום ביומן</button>
+  </div>
+  <div class="dim" style="font-size:.78rem; margin-top:6px">
+    נרשם לפי מחיר הקנייה <b>האמיתי</b> (הליכה על ספר ההזמנות), לא לפי המחיר המוצג.
+  </div>
+</div>
+
+<!-- ==================== JOURNAL ==================== -->
+<div class="card" id="journalCard">
+  <div class="outcome-head">
+    <h2 style="margin:0">2. היומן שלך</h2>
+    <button class="small" onclick="checkResults()">🔄 עדכן תוצאות</button>
+  </div>
+  <div id="stats"></div>
+  <div id="verdict"></div>
+  <div id="journal"></div>
+  <div class="row" style="margin-top:10px">
+    <button class="small danger" onclick="clearJournal()">מחק יומן</button>
+  </div>
+</div>
+
+<p class="sub" style="text-align:center">
+  הנתונים ישירות מה־API הציבורי של Polymarket (Gamma + CLOB).<br>
+  היומן נשמר רק בדפדפן שלך (localStorage).
+</p>
+
+<script>
+'use strict';
+const GAMMA = 'https://gamma-api.polymarket.com';
+const CLOB  = 'https://clob.polymarket.com';
+const LS_KEY = 'pmtruth_journal_v1';
+
+let current = null;      // {question, slug, endDate, closed, outcomes[], tokens[], conditionId}
+let books = {};          // tokenId -> {bids:[{p,s}], asks:[{p,s}]} best-first
+let mids = {};           // tokenId -> midpoint number
+let refreshTimer = null;
+let lastBookRefresh = 0;
+let selectedPaperOutcome = 0;
+let liveValues = {};     // journal item id -> current real sell value (not persisted)
+
+/* ---------------- helpers ---------------- */
+async function getJSON(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function cents(p){ return (p*100).toFixed(1).replace(/\.0$/,'') + '¢'; }
+function usd(x){ return '$' + x.toFixed(2); }
+function parseArr(v){
+  if(Array.isArray(v)) return v;
+  try{ return JSON.parse(v || '[]'); }catch(e){ return []; }
+}
+function loadJournal(){
+  try{ return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); }catch(e){ return []; }
+}
+function saveJournal(j){ localStorage.setItem(LS_KEY, JSON.stringify(j)); }
+
+/* ---------------- market finding ---------------- */
+/* 5-minute windows have clock-aligned slugs (…-<unixtime>), so the window
+   running RIGHT NOW can be computed directly instead of trusting the series
+   listing, which sometimes only returns windows hours away. */
+const FIVE_MIN_PREFIX = {
+  'btc-up-or-down-5m': 'btc-updown-5m-',
+  'eth-up-or-down-5m': 'eth-updown-5m-'
+};
+
+async function loadSeries(slug, label){
+  const res = document.getElementById('results');
+  res.innerHTML = '<div class="spin">טוען שווקים של ' + esc(label) + '...</div>';
+  try{
+    let items = [];
+    const prefix = FIVE_MIN_PREFIX[slug];
+    if(prefix){
+      const base = Math.floor(Date.now() / 1000 / 300) * 300;
+      const found = await Promise.all([base, base + 300, base + 600].map(t =>
+        getJSON(GAMMA + '/events?slug=' + prefix + t).then(a => a[0]).catch(() => null)));
+      items = found.filter(Boolean).map((e, i) => (e._live = (i === 0), e));
+    }
+    if(!items.length){
+      const series = await getJSON(GAMMA + '/series?slug=' + encodeURIComponent(slug) + '&limit=1');
+      const events = (series[0] && series[0].events) || [];
+      const now = Date.now();
+      items = events
+        .filter(e => e.endDate && Date.parse(e.endDate) > now - 60000)
+        .sort((a,b) => Date.parse(a.endDate) - Date.parse(b.endDate))
+        .slice(0, 5);
+    }
+    if(!items.length){
+      res.innerHTML = '<div class="spin">לא נמצאו חלונות פעילים בסדרה הזאת.</div>';
+      return;
+    }
+    res.innerHTML = items.map(e =>
+      '<div class="result-item" onclick="loadEvent(\'' + esc(e.slug) + '\')">' +
+        (e._live ? '<span class="tag" style="color:var(--green);border-color:var(--green)">🔴 רץ עכשיו</span> ' : '') +
+        esc(e.title) +
+        '<div class="t">נסגר: ' + new Date(e.endDate).toLocaleTimeString('he-IL') + '</div>' +
+      '</div>').join('');
+  }catch(err){
+    res.innerHTML = '<div class="spin">שגיאה בטעינה: ' + esc(err.message) + '</div>';
+  }
+}
+
+async function doSearch(){
+  const q = document.getElementById('searchBox').value.trim();
+  if(!q) return;
+  const res = document.getElementById('results');
+
+  // pasted polymarket URL?
+  const m = q.match(/polymarket\.com\/event\/([^/?#]+)/i);
+  if(m){ loadEvent(m[1]); return; }
+
+  res.innerHTML = '<div class="spin">מחפש...</div>';
+  try{
+    const data = await getJSON(GAMMA + '/public-search?q=' + encodeURIComponent(q) + '&limit_per_type=8');
+    const events = (data.events || []).filter(e => !e.closed);
+    if(!events.length){
+      res.innerHTML = '<div class="spin">לא נמצאו שווקים פתוחים. נסה ניסוח אחר או הדבק קישור.</div>';
+      return;
+    }
+    res.innerHTML = events.map(e =>
+      '<div class="result-item" onclick="loadEvent(\'' + esc(e.slug) + '\')">' +
+        esc(e.title) +
+        (e.endDate ? '<div class="t">נסגר: ' + new Date(e.endDate).toLocaleString('he-IL') + '</div>' : '') +
+      '</div>').join('');
+  }catch(err){
+    res.innerHTML = '<div class="spin">שגיאה בחיפוש: ' + esc(err.message) + '</div>';
+  }
+}
+
+async function loadEvent(slug){
+  const res = document.getElementById('results');
+  res.innerHTML = '<div class="spin">טוען שוק...</div>';
+  try{
+    const evs = await getJSON(GAMMA + '/events?slug=' + encodeURIComponent(slug));
+    const ev = evs[0];
+    if(!ev || !ev.markets || !ev.markets.length) throw new Error('לא נמצא שוק');
+    // several sub-markets? show a chooser
+    const open = ev.markets.filter(mk => !mk.closed);
+    const list = open.length ? open : ev.markets;
+    if(list.length > 1){
+      res.innerHTML = list.map(mk =>
+        '<div class="result-item" onclick="selectMarket(\'' + esc(mk.slug) + '\')">' + esc(mk.question) + '</div>'
+      ).join('');
+      window._pendingMarkets = list;
+      return;
+    }
+    res.innerHTML = '';
+    setMarket(list[0], ev.title);
+  }catch(err){
+    res.innerHTML = '<div class="spin">שגיאה: ' + esc(err.message) + '</div>';
+  }
+}
+
+function selectMarket(slug){
+  const mk = (window._pendingMarkets || []).find(x => x.slug === slug);
+  if(mk){ document.getElementById('results').innerHTML = ''; setMarket(mk, mk.question); }
+}
+
+function setMarket(mk, title){
+  current = {
+    question: mk.question || title,
+    slug: mk.slug,
+    endDate: mk.endDate,
+    closed: !!mk.closed,
+    outcomes: parseArr(mk.outcomes),
+    tokens: parseArr(mk.clobTokenIds),
+    conditionId: mk.conditionId
+  };
+  books = {}; mids = {};
+  document.getElementById('marketView').classList.remove('hidden');
+  document.getElementById('mTitle').textContent = current.question;
+  document.getElementById('mEnd').textContent =
+    current.endDate ? 'נסגר: ' + new Date(current.endDate).toLocaleTimeString('he-IL') : '';
+  renderPaperButtons();
+  refreshBooks();
+  if(refreshTimer) clearInterval(refreshTimer);
+  // book refresh speeds up to 2s inside the last 90s, when prices move fastest
+  refreshTimer = setInterval(() => {
+    renderCountdown();
+    const msLeft = current && current.endDate ? Date.parse(current.endDate) - Date.now() : Infinity;
+    const wanted = msLeft <= 90000 ? 2000 : 5000;
+    if(Date.now() - lastBookRefresh >= wanted) refreshBooks();
+  }, 1000);
+  document.getElementById('marketView').scrollIntoView({behavior:'smooth'});
+}
+
+/* ---------------- orderbook ---------------- */
+function normBook(raw){
+  // defensively sort: bids best(high) first, asks best(low) first
+  const bids = (raw.bids || []).map(l => ({p:+l.price, s:+l.size})).sort((a,b) => b.p - a.p);
+  const asks = (raw.asks || []).map(l => ({p:+l.price, s:+l.size})).sort((a,b) => a.p - b.p);
+  return {bids, asks};
+}
+
+async function refreshBooks(){
+  if(!current) return;
+  lastBookRefresh = Date.now();
+  const jobs = current.tokens.map(async t => {
+    try{
+      const [bk, md] = await Promise.all([
+        getJSON(CLOB + '/book?token_id=' + t),
+        getJSON(CLOB + '/midpoint?token_id=' + t).catch(() => null)
+      ]);
+      books[t] = normBook(bk);
+      mids[t] = md ? +md.mid : null;
+    }catch(e){
+      books[t] = null;
+    }
+  });
+  await Promise.all(jobs);
+  document.getElementById('mRefreshed').textContent =
+    'עודכן: ' + new Date().toLocaleTimeString('he-IL');
+  renderBooks();
+}
+
+/* walk the book: sell `shares` into bids -> {proceeds, avg, unfilled} */
+function walkSell(bids, shares){
+  let remaining = shares, proceeds = 0;
+  for(const l of bids){
+    if(remaining <= 0) break;
+    const take = Math.min(remaining, l.s);
+    proceeds += take * l.p;
+    remaining -= take;
+  }
+  return {proceeds, avg: shares > remaining ? proceeds / (shares - remaining) : 0, unfilled: remaining};
+}
+/* buy `shares` from asks -> {cost, avg, unfilled} */
+function walkBuy(asks, shares){
+  let remaining = shares, cost = 0;
+  for(const l of asks){
+    if(remaining <= 0) break;
+    const take = Math.min(remaining, l.s);
+    cost += take * l.p;
+    remaining -= take;
+  }
+  return {cost, avg: shares > remaining ? cost / (shares - remaining) : 0, unfilled: remaining};
+}
+
+function renderCountdown(){
+  if(!current || !current.endDate) return;
+  const el = document.getElementById('mCountdown');
+  const warnEl = document.getElementById('lastSecWarn');
+  const ms = Date.parse(current.endDate) - Date.now();
+  if(ms <= 0){
+    el.textContent = 'השוק נסגר';
+    el.className = 'tag countdown red';
+    warnEl.innerHTML = '';
+    return;
+  }
+  const s = Math.floor(ms / 1000);
+  const mmss = Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
+  el.textContent = 'נותרו ' + mmss;
+  if(s <= 90){
+    el.className = 'tag countdown red';
+    warnEl.innerHTML = '<div class="warn">⏳ <b>שניות אחרונות.</b> בשלב הזה הקונים נעלמים מהספר — ' +
+      'בדיוק כך נוצר המצב שבו המסך מראה רווח אבל המכירה בפועל שווה 0.</div>';
+  }else{
+    el.className = 'tag countdown';
+    warnEl.innerHTML = '';
+  }
+}
+
+function renderBooks(){
+  if(!current) return;
+  const wrap = document.getElementById('outcomes');
+  const shares = Math.max(0, +document.getElementById('calcShares').value || 0);
+  let html = '';
+
+  current.tokens.forEach((t, i) => {
+    const name = current.outcomes[i] || ('תוצאה ' + (i+1));
+    const bk = books[t];
+    html += '<div class="card" style="background:var(--card2); margin-top:10px">';
+    html += '<div class="outcome-head"><b style="font-size:1.1rem">' + esc(name) + '</b>';
+
+    if(!bk){
+      html += '</div><div class="dim">אין נתוני ספר (טוען או שהשוק סגור)</div></div>';
+      return;
+    }
+    const bestBid = bk.bids.length ? bk.bids[0].p : 0;
+    const bestAsk = bk.asks.length ? bk.asks[0].p : null;
+    const mid = mids[t];
+
+    html += '<span class="tag">מוצג באתר: <span class="num">' + (mid != null ? cents(mid) : '—') + '</span></span></div>';
+
+    html += '<div class="grid2">';
+    html += '<div class="kv"><div class="k">תקבל אם תמכור עכשיו (Bid)</div><div class="v ' +
+            (bestBid > 0 ? 'green' : 'red') + ' num">' + (bestBid > 0 ? cents(bestBid) : 'אין קונים!') + '</div></div>';
+    html += '<div class="kv"><div class="k">תשלם אם תקנה עכשיו (Ask)</div><div class="v num">' +
+            (bestAsk != null ? cents(bestAsk) : '—') + '</div></div>';
+    html += '</div>';
+
+    if(bestAsk != null && bestBid > 0){
+      const spread = bestAsk - bestBid;
+      html += '<div class="dim" style="font-size:.8rem; margin-top:6px">ספרד: <span class="num">' + cents(spread) +
+              '</span> — זה מה שאתה מפסיד מובנה על קנייה+מכירה מיידית.</div>';
+    }
+
+    // book depth: top 3 levels each side, so thin markets are visible at a glance
+    const depth = (levels) => levels.slice(0,3).map(l =>
+      '<span class="num">' + cents(l.p) + '</span> × <span class="num">' + Math.round(l.s) + '</span>').join('<br>') || '<span class="red">ריק</span>';
+    html += '<div class="grid2" style="margin-top:8px; font-size:.78rem">' +
+      '<div class="kv" style="text-align:right"><div class="k">קונים אמיתיים (מחיר × כמות)</div>' + depth(bk.bids) + '</div>' +
+      '<div class="kv" style="text-align:right"><div class="k">מוכרים אמיתיים (מחיר × כמות)</div>' + depth(bk.asks) + '</div>' +
+      '</div>';
+
+    // the illusion detector
+    if(mid != null && mid >= 0.03){
+      if(bestBid === 0){
+        html += '<div class="warn">🚨 <b>זו בדיוק האשליה:</b> המסך מציג ' + cents(mid) +
+                ' למניה, אבל אין אף קונה בספר. מכירה עכשיו = <b>$0.00</b>.</div>';
+      }else if(bestBid < mid * 0.5){
+        html += '<div class="warn">⚠️ המחיר המוצג (' + cents(mid) + ') גבוה פי ' + (mid/bestBid).toFixed(1) +
+                ' ממה שקונים באמת משלמים (' + cents(bestBid) + '). אל תאמין למספר הירוק.</div>';
+      }
+    }
+
+    // real sell calculator
+    if(shares > 0){
+      const w = walkSell(bk.bids, shares);
+      const displayed = mid != null ? mid * shares : null;
+      html += '<div class="verdict">מכירת <b class="num">' + shares + '</b> מניות ' + esc(name) + ' עכשיו: ' +
+              '<b class="num ' + (w.proceeds > 0 ? 'green' : 'red') + '">' + usd(w.proceeds) + '</b>' +
+              (w.unfilled > 0 ? ' <span class="red">(אין קונים ל־' + Math.ceil(w.unfilled) + ' מניות!)</span>' : '') +
+              (displayed != null ? '<br><span class="dim" style="font-size:.8rem">לפי המספר המוצג זה היה "שווה" ' +
+               usd(displayed) + ' — הפרש של ' + usd(Math.abs(displayed - w.proceeds)) + '</span>' : '') +
+              '</div>';
+    }
+    html += '</div>';
+  });
+  wrap.innerHTML = html;
+}
+
+/* ---------------- paper journal ---------------- */
+function renderPaperButtons(){
+  const wrap = document.getElementById('paperOutcomeBtns');
+  wrap.innerHTML = current.outcomes.map((o,i) =>
+    '<button class="small' + (i === selectedPaperOutcome ? ' primary' : '') + '" ' +
+    'onclick="selectedPaperOutcome=' + i + ';renderPaperButtons()">' + esc(o) + '</button>').join('');
+}
+
+function logPaperTrade(){
+  if(!current) return;
+  const shares = +document.getElementById('paperShares').value || 0;
+  if(shares <= 0){ alert('כמה מניות?'); return; }
+  const t = current.tokens[selectedPaperOutcome];
+  const bk = books[t];
+  if(!bk || !bk.asks.length){ alert('אין מוכרים בספר כרגע — אי אפשר "לקנות" אפילו על הנייר.'); return; }
+  const w = walkBuy(bk.asks, shares);
+  if(w.unfilled > 0){ alert('אין מספיק מוכרים ל־' + shares + ' מניות. המקסימום כרגע: ' + Math.floor(shares - w.unfilled)); return; }
+  const j = loadJournal();
+  j.unshift({
+    id: Date.now() + '_' + Math.random().toString(36).slice(2,7),
+    ts: Date.now(),
+    slug: current.slug,
+    question: current.question,
+    outcome: current.outcomes[selectedPaperOutcome],
+    outcomeIndex: selectedPaperOutcome,
+    token: t,
+    shares: shares,
+    cost: +w.cost.toFixed(4),
+    avgPrice: +w.avg.toFixed(4),
+    status: 'open',
+    pnl: null
+  });
+  saveJournal(j);
+  renderJournal();
+  document.getElementById('journalCard').scrollIntoView({behavior:'smooth'});
+}
+
+async function checkResults(){
+  const j = loadJournal();
+  const open = j.filter(x => x.status === 'open');
+  if(!open.length){ renderJournal(); return; }
+  const slugs = [...new Set(open.map(x => x.slug))];
+  for(const slug of slugs){
+    try{
+      const ms = await getJSON(GAMMA + '/markets?slug=' + encodeURIComponent(slug));
+      const mk = ms[0];
+      if(!mk || !mk.closed) continue;
+      const prices = parseArr(mk.outcomePrices).map(Number);
+      const winIdx = prices.findIndex(p => p >= 0.99);
+      for(const item of j){
+        if(item.slug !== slug || item.status !== 'open') continue;
+        if(winIdx === -1){ item.status = 'void'; item.pnl = 0; continue; }
+        if(item.outcomeIndex === winIdx){
+          item.status = 'won';
+          item.pnl = +(item.shares * 1 - item.cost).toFixed(2);
+        }else{
+          item.status = 'lost';
+          item.pnl = -+item.cost.toFixed(2);
+        }
+        item.resolvedAt = Date.now();
+      }
+    }catch(e){ /* market not found yet — keep open */ }
+  }
+  saveJournal(j);
+
+  // for trades still open: fetch the live book and show what they're REALLY worth now
+  liveValues = {};
+  const stillOpen = j.filter(x => x.status === 'open' && x.token);
+  await Promise.all(stillOpen.map(async x => {
+    try{
+      const bk = normBook(await getJSON(CLOB + '/book?token_id=' + x.token));
+      liveValues[x.id] = walkSell(bk.bids, x.shares).proceeds;
+    }catch(e){ /* book gone (market closed) — nothing to show */ }
+  }));
+
+  renderJournal();
+}
+
+function clearJournal(){
+  if(confirm('למחוק את כל היומן?')){ saveJournal([]); renderJournal(); }
+}
+
+function renderJournal(){
+  const j = loadJournal();
+  const wrap = document.getElementById('journal');
+  const stats = document.getElementById('stats');
+  const verdict = document.getElementById('verdict');
+
+  if(!j.length){
+    wrap.innerHTML = '<div class="spin">אין עדיין רשומות. בחר שוק למעלה ורשום החלטה על הנייר.</div>';
+    stats.innerHTML = ''; verdict.innerHTML = '';
+    return;
+  }
+
+  const resolved = j.filter(x => x.status === 'won' || x.status === 'lost');
+  const wins = resolved.filter(x => x.status === 'won');
+  const staked = resolved.reduce((s,x) => s + x.cost, 0);
+  const pnl = resolved.reduce((s,x) => s + (x.pnl || 0), 0);
+  const winRate = resolved.length ? (wins.length / resolved.length * 100) : null;
+  const avgEntry = resolved.length ? resolved.reduce((s,x) => s + x.avgPrice, 0) / resolved.length : null;
+
+  stats.innerHTML =
+    '<div class="statgrid">' +
+    '<div class="kv"><div class="k">החלטות</div><div class="v num">' + j.length + '</div></div>' +
+    '<div class="kv"><div class="k">הוכרעו</div><div class="v num">' + resolved.length + '</div></div>' +
+    '<div class="kv"><div class="k">אחוז פגיעה</div><div class="v num">' + (winRate != null ? winRate.toFixed(0) + '%' : '—') + '</div></div>' +
+    '<div class="kv"><div class="k">הושקע (נייר)</div><div class="v num">' + usd(staked) + '</div></div>' +
+    '<div class="kv"><div class="k">רווח/הפסד</div><div class="v num ' + (pnl >= 0 ? 'green' : 'red') + '">' + usd(pnl) + '</div></div>' +
+    '<div class="kv"><div class="k">תשואה</div><div class="v num ' + (pnl >= 0 ? 'green' : 'red') + '">' +
+      (staked > 0 ? ((pnl/staked*100).toFixed(0) + '%') : '—') + '</div></div>' +
+    '</div>';
+
+  if(resolved.length >= 5 && avgEntry != null){
+    const needed = avgEntry * 100;
+    verdict.innerHTML = '<div class="verdict">📐 <b>המתמטיקה שלך:</b> במחיר כניסה ממוצע של ' + cents(avgEntry) +
+      ' אתה צריך לפגוע ב־<b class="num">' + needed.toFixed(0) + '%</b> מהפעמים רק כדי לצאת בלי הפסד. ' +
+      'בפועל אתה פוגע ב־<b class="num">' + winRate.toFixed(0) + '%</b>. ' +
+      (winRate > needed + 5
+        ? '<span class="green">כרגע מעל קו הרווח — אבל צריך הרבה יותר מ־' + resolved.length + ' החלטות כדי שזה יהיה מובהק ולא מזל.</span>'
+        : '<span class="red">מתחת לקו הרווח. הנתונים שלך עצמם אומרים: זה מפסיד.</span>') +
+      '</div>';
+  }else{
+    verdict.innerHTML = '<div class="verdict dim">אחרי 5 החלטות שהוכרעו יופיע כאן חשבון הרווחיות האמיתי שלך.</div>';
+  }
+
+  const stEmoji = {open:'⏳', won:'✅', lost:'❌', void:'➖'};
+  wrap.innerHTML = j.map(x =>
+    '<div class="journal-item">' +
+    stEmoji[x.status] + ' <b>' + esc(x.outcome) + '</b> · ' + esc(x.question) +
+    '<div class="t dim" style="font-size:.78rem">' +
+      new Date(x.ts).toLocaleString('he-IL') + ' · ' +
+      '<span class="num">' + x.shares + '</span> מניות @ <span class="num">' + cents(x.avgPrice) + '</span>' +
+      ' · עלות <span class="num">' + usd(x.cost) + '</span>' +
+      (x.pnl != null ? ' · תוצאה: <b class="num ' + (x.pnl >= 0 ? 'green' : 'red') + '">' + usd(x.pnl) + '</b>' : '') +
+      (x.status === 'open' && liveValues[x.id] != null
+        ? ' · שווי אמיתי עכשיו: <b class="num ' + (liveValues[x.id] >= x.cost ? 'green' : 'red') + '">' +
+          usd(liveValues[x.id]) + '</b>' : '') +
+    '</div></div>'
+  ).join('');
+}
+
+renderJournal();
+// on load: resolve finished paper trades and price the open ones off the live book
+if(loadJournal().some(x => x.status === 'open')) checkResults();
+</script>
+</body>
+</html>
