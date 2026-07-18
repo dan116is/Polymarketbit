@@ -44,6 +44,7 @@ class WindowState:
     exec_ask: float | None = None
     book: dict = field(default_factory=dict)  # side -> (bid, ask, bdepth, adepth)
     book_at: float = 0.0                      # last live book update (any source)
+    input_age_ms: float | None = None         # staleness of the decision inputs
     official_outcome: str | None = None       # from CLOB market_resolved event
     outcome: str | None = None
 
@@ -287,6 +288,12 @@ class Engine:
         st.signal_ts = now
         side_book = st.book.get(sig.side.lower())
         st.signal_ask = side_book[1] if side_book else None
+        # input staleness: the signal is only as fresh as its STALEST critical
+        # input (the book we cross + the spot we price from). This is the part
+        # of real latency that build_ms alone misses — it decides GO/NO-GO.
+        spot_recv = getattr(self.binance, "recv_at", 0.0) or now
+        st.input_age_ms = max(0.0,
+                              (now - min(st.book_at or now, spot_recv)) * 1000.0)
 
         # MONEY PATH FIRST — spawn the executors before ANY documentation work.
         # An awaited Telegram POST (up to 5s timeout) or the SQLite writes must

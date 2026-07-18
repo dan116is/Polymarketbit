@@ -21,6 +21,19 @@ import time
 log = logging.getLogger("polysignal.executor")
 
 
+MARKETABLE_CUSHION = 0.02
+
+
+def marketable_price(ask: float, cushion: float = MARKETABLE_CUSHION) -> float:
+    """Aggressive marketable BUY limit: cross the ask by a cushion, capped at
+    0.99. Deliberately NOT capped at the signal-time ask — the deep-improve
+    audit showed that capping there collapses test EV from +2.66c to +0.18c,
+    because it kills exactly the adverse-ask-up fills that are the market
+    confirming our signal (those fills carry +1.92c EV each). A regression
+    test locks this in."""
+    return min(0.99, ask + cushion)
+
+
 def _make_clob_client(private_key: str, funder: str | None = None):
     """py-clob-client wired for order building; L1-only (no API creds needed
     for building/signing)."""
@@ -48,10 +61,19 @@ def _build_signed_order(client, token_id: str, price: float, stake_usd: float,
 class ShadowExecutor:
     """Measures what the real bot would experience — without trading."""
 
+    # measured warm POST round-trip to clob.polymarket.com (2026-07-17):
+    # ~150ms warm, so the estimated real latency = input staleness + build +
+    # this. Overridable via config m6.warm_post_ms.
+    DEFAULT_WARM_POST_MS = 150.0
+
     def __init__(self, store, cfg: dict):
         self.store = store
         self.cfg = cfg
         self._client = None
+        self.warm_post_ms = float(cfg.get("m6", {}).get(
+            "warm_post_ms", self.DEFAULT_WARM_POST_MS))
+        # delay before the tail-fill probe; 1s live, set to 0 in tests
+        self.tail_probe_s = float(cfg.get("m6", {}).get("tail_probe_s", 1.0))
 
     def _ensure_client(self):
         if self._client is None:
@@ -84,8 +106,7 @@ class ShadowExecutor:
         t0 = time.perf_counter()
         try:
             client = self._ensure_client()
-            # marketable price: cross the current ask (capped to book bounds)
-            price = min(0.99, (ask_at_signal or 0.5) + 0.02)
+            price = marketable_price(ask_at_signal or 0.5)
             await asyncio.to_thread(
                 _build_signed_order, client, token, price, sig.stake_usd,
                 st.market.tick_size, False)
@@ -97,14 +118,41 @@ class ShadowExecutor:
         ask_at_ready = book2[1] if book2 else None
         drift = ((ask_at_ready - ask_at_signal) * 100
                  if ask_at_ready is not None and ask_at_signal is not None else None)
+        # THE real capturable latency: how stale the inputs were when we decided
+        # + the crypto build + the warm POST. build_ms alone hid the first term.
+        input_age_ms = getattr(st, "input_age_ms", None)
+        est_roundtrip_ms = (
+            (input_age_ms or 0.0) + (build_ms or 0.0) + self.warm_post_ms
+            if build_ms is not None else None)
+
+        # tail-fill probe: 1s after the signal, would a marketable order at
+        # (signal ask + 2c cushion) STILL clear? 64% of backtest return comes
+        # from fast-move windows where the ask gaps exactly then — this is the
+        # single riskiest live assumption, measured directly.
+        cushion = 0.02
+        await asyncio.sleep(self.tail_probe_s)
+        book3 = st.book.get(side_key)
+        ask_1s = book3[1] if book3 else None
+        ask_drift_1s = ((ask_1s - ask_at_signal) * 100
+                        if ask_1s is not None and ask_at_signal is not None else None)
+        would_fill = (1 if (ask_1s is not None and ask_at_signal is not None
+                            and ask_1s <= ask_at_signal + cushion) else 0)
+
         self.store.conn.execute(
-            "INSERT OR REPLACE INTO shadow_execs VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO shadow_execs "
+            "(window_ts, mode, side, stake_usd, t_signal, build_ms, "
+            " ask_at_signal, ask_at_ready, drift_cents, input_age_ms, "
+            " est_roundtrip_ms, ask_drift_1s_cents, would_fill) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (st.window_ts, mode, sig.side, sig.stake_usd, st.signal_ts or time.time(),
-             build_ms, ask_at_signal, ask_at_ready, drift))
+             build_ms, ask_at_signal, ask_at_ready, drift, input_age_ms,
+             est_roundtrip_ms, ask_drift_1s, would_fill))
         self.store.conn.commit()
         self.store.log_event("SHADOW_EXEC", json.dumps(
             {"window_ts": st.window_ts, "build_ms": build_ms,
-             "ask_signal": ask_at_signal, "ask_ready": ask_at_ready}))
+             "input_age_ms": round(input_age_ms, 1) if input_age_ms else None,
+             "est_roundtrip_ms": round(est_roundtrip_ms, 1) if est_roundtrip_ms else None,
+             "ask_drift_1s_cents": ask_drift_1s, "would_fill": would_fill}))
 
 
 class LiveExecutor:
@@ -174,7 +222,7 @@ class LiveExecutor:
         token = (st.market.token_id_up if sig.side == "UP"
                  else st.market.token_id_down)
         stake = min(sig.stake_usd, float(self.cfg["m6"].get("max_stake_usd", 1.0)))
-        price = min(0.99, ask + 0.02)  # marketable cap
+        price = marketable_price(ask)
         order = await asyncio.to_thread(
             _build_signed_order, self._client, token, price, stake,
             st.market.tick_size, False)

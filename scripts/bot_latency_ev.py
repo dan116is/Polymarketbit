@@ -4,10 +4,16 @@ The hand died at 5s; the bot lives or dies between 0 and 3 seconds. This
 produces the EV-vs-latency curve the GATE1B verdict reads, on the untouched
 holdout, at 0/1/2/3s.
 
-Usage: python scripts/bot_latency_ev.py   ->  reports/bot_ev.md + bot_ev.json
+Usage: python scripts/bot_latency_ev.py [--theta 0.10]  ->  reports/bot_ev.*
+
+--theta overrides the grid-selected EV threshold: the deep-improve audit found
+theta=0.10 the best operating point (@1s +2.50c vs +0.99c at 0.06) by filtering
+adversely-selected marginal signals. Passing it here regenerates the gate curve
+at the operating point the engine actually fires at, keeping GATE1B honest.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 
@@ -19,7 +25,13 @@ from scripts.backtest import GATE1, add_sigma, load_data, metrics, simulate
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--theta", type=float, default=None,
+                    help="override EV threshold (e.g. 0.10); default = grid best")
+    args = ap.parse_args()
     best = json.load(open("reports/backtest_results.json"))["best"]
+    if args.theta is not None:
+        best = {**best, "theta": args.theta}
     hl, theta, buf = best["halflife"], best["theta"], best["buffer"]
     band = tuple(int(x) for x in best["band"].split("-"))
     print(f"config: hl={hl} theta={theta} buffer={buf} band={band}")

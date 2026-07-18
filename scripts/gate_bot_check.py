@@ -3,11 +3,14 @@ MEASURED shadow latency and drift, per the plan's 'same gates' rule for M6.
 
 Green requires ALL of:
 - >= 100 shadow executions measured
-- measured p95 total latency (build+sign + safety margin) maps to a latency
-  bucket whose test EV >= +2c with a CI excluding 0 from below
+- measured p95 REAL round-trip latency (input staleness + build+sign + warm
+  POST — not an assumed margin) maps to a latency bucket whose test EV >= +2c
+  with a CI excluding 0 from below
 - >= 500 full-period signals at that latency
 - EV still positive at double the measured latency (fragility)
 - measured live ask drift consistent with (not worse than) the backtest slip
+- measured tail-fill rate >= 0.6 (a marketable order still clears 1s later) —
+  the fast-move windows carry most of the edge and are the hardest to fill
 
 Usage: python scripts/gate_bot_check.py
 """
@@ -23,13 +26,21 @@ from polysignal.store import Store
 
 CFG = json.load(open("config.json"))
 MIN_SHADOW = 100
-NETWORK_MARGIN_MS = 400  # order POST round-trip allowance on top of build+sign
+NETWORK_MARGIN_MS = 400  # legacy fallback for rows without est_roundtrip_ms
+MIN_FILL_RATE = 0.6
+
+
+def _pct(sorted_vals, q):
+    if not sorted_vals:
+        return None
+    return sorted_vals[min(len(sorted_vals) - 1, int(q * (len(sorted_vals) - 1)))]
 
 
 def main():
     conn = sqlite3.connect(CFG["runtime"]["db_path"])
     rows = conn.execute(
-        "SELECT build_ms, drift_cents FROM shadow_execs "
+        "SELECT build_ms, drift_cents, est_roundtrip_ms, would_fill, "
+        "ask_drift_1s_cents FROM shadow_execs "
         "WHERE build_ms IS NOT NULL").fetchall()
     n = len(rows)
     try:
@@ -43,9 +54,24 @@ def main():
         _write(False, {"n_shadow": n, "reason": "not_enough_shadow"})
         return
 
-    builds = sorted(r[0] for r in rows)
-    p95_ms = builds[int(0.95 * (n - 1))]
-    total_s = min((p95_ms + NETWORK_MARGIN_MS) / 1000.0, 3.0)
+    # REAL end-to-end latency when available (input staleness + build + warm
+    # POST); fall back to the old build+margin only for pre-instrumentation rows
+    rt = sorted(r[2] for r in rows if r[2] is not None)
+    if rt:
+        p95_ms = _pct(rt, 0.95)
+        p50_ms = _pct(rt, 0.50)
+        latency_src = "measured_roundtrip"
+    else:
+        builds = sorted(r[0] for r in rows)
+        p95_ms = _pct(builds, 0.95) + NETWORK_MARGIN_MS
+        p50_ms = _pct(builds, 0.50) + NETWORK_MARGIN_MS
+        latency_src = "build_plus_margin_fallback"
+    total_s = min(p95_ms / 1000.0, 3.0)
+    # tail-fill: fraction of signals where a marketable order still clears +1s
+    fills = [r[3] for r in rows if r[3] is not None]
+    fill_rate = sum(fills) / len(fills) if fills else None
+    drifts_1s = [r[4] for r in rows if r[4] is not None]
+    mean_drift_1s = sum(drifts_1s) / len(drifts_1s) if drifts_1s else None
 
     def interp(field: str) -> float | None:
         """EV/CI-floor linearly interpolated between the adjacent latency
@@ -71,17 +97,22 @@ def main():
     drifts = [r[1] for r in rows if r[1] is not None]
     mean_drift = sum(drifts) / len(drifts) if drifts else None
 
-    res = {"n_shadow": n, "p95_build_ms": round(p95_ms, 1),
+    res = {"n_shadow": n, "latency_src": latency_src,
+           "p50_roundtrip_ms": round(p50_ms, 1),
+           "p95_roundtrip_ms": round(p95_ms, 1),
            "assumed_total_s": round(total_s, 2),
            "ev_cents": round(ev, 2) if ev is not None else None,
            "ci_floor": round(ci_floor, 2) if ci_floor is not None else None,
            "full_n": full_n,
            "ev_at_double_latency": round(ev_double, 2) if ev_double is not None else None,
-           "mean_live_drift_cents": mean_drift}
+           "mean_live_drift_cents": mean_drift,
+           "tail_fill_rate": round(fill_rate, 3) if fill_rate is not None else None,
+           "mean_ask_drift_1s_cents": round(mean_drift_1s, 2) if mean_drift_1s is not None else None}
     green = (ev is not None and ev >= 2.0
              and ci_floor is not None and ci_floor > 0
              and full_n >= 500
-             and ev_double is not None and ev_double > 0)
+             and ev_double is not None and ev_double > 0
+             and (fill_rate is None or fill_rate >= MIN_FILL_RATE))
     print(f"GATE1B {'ירוק' if green else 'אדום'}: {res}")
     _write(green, res)
 

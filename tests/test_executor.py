@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from polysignal.executor import LiveExecutor, ShadowExecutor
+from polysignal.executor import LiveExecutor, ShadowExecutor, marketable_price
 from polysignal.risk import RiskManager
 from polysignal.store import Store
 from tests.test_engine_guards import make_market
@@ -62,6 +62,17 @@ def test_live_fire_refuses_and_logs(stack):
     assert n == 1
 
 
+def test_marketable_price_never_capped_at_ask():
+    """Regression lock (deep-improve): the FAK limit must CROSS the ask, never
+    sit at/below it — capping at the signal-time ask collapses EV to +0.18c."""
+    # crosses by the cushion, strictly above the ask at every price
+    for a in (0.05, 0.10, 0.33, 0.50, 0.70, 0.90, 0.95):
+        assert marketable_price(a) > a, f"must cross ask at {a}"
+    assert abs(marketable_price(0.50) - 0.52) < 1e-9      # +2c cushion
+    assert marketable_price(0.985) == 0.99                # ceiling only
+    assert marketable_price(0.99) == 0.99
+
+
 def test_live_fire_refuses_stale_book(stack, monkeypatch):
     """All locks open but the book is older than 2s -> refuse BEFORE any
     client/network work. The edge model priced a book that no longer exists."""
@@ -90,17 +101,23 @@ def test_shadow_records_real_build_latency(stack):
     the measured latency — nothing is ever sent."""
     store, risk = stack
     ex = ShadowExecutor(store, CFG)
+    ex.tail_probe_s = 0.0  # skip the 1s live tail-fill wait in tests
 
     class St:
         window_ts = 1784226900
         market = make_market(1784226900)
         book = {"up": (0.49, 0.50, 300.0, 300.0)}
         signal_ts = None
+        input_age_ms = 120.0
     from polysignal.quant import Signal
     asyncio.run(ex.on_signal(St(), Signal("UP", 1.0, 0.08, 0.6, "t"), "PAPER"))
     row = store.conn.execute(
-        "SELECT side, stake_usd, build_ms, ask_at_signal FROM shadow_execs").fetchone()
+        "SELECT side, stake_usd, build_ms, ask_at_signal, est_roundtrip_ms, "
+        "would_fill FROM shadow_execs").fetchone()
     assert row is not None
-    side, stake, build_ms, ask = row
+    side, stake, build_ms, ask, rt, would_fill = row
     assert side == "UP" and stake == 1.0 and ask == 0.50
     assert build_ms is not None and 0 < build_ms < 10_000
+    # real round-trip = input staleness (120) + build + warm POST (150) > build
+    assert rt is not None and rt > build_ms + 150
+    assert would_fill == 1  # ask unchanged at +0s -> still clears

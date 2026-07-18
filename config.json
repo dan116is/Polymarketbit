@@ -1,7 +1,7 @@
 {
   "_comment": "ספים זמניים. theta/buffer/חלון הזמן/half-life נקבעים סופית ב-backtest (M2), לא כאן. את תקרת ההפסד היומית משנה רק דניאל ידנית.",
   "model": {
-    "theta_cents": 6.0,
+    "theta_cents": 10.0,
     "buffer_cents": 3.0,
     "sigma_halflife_s": 60,
     "sigma_floor": 1e-06,

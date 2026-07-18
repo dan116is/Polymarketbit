@@ -66,15 +66,19 @@ CREATE TABLE IF NOT EXISTS gates (
 -- real signal->order-ready latency and the ask drift over it — the numbers the
 -- real-bot decision hinges on.
 CREATE TABLE IF NOT EXISTS shadow_execs (
-    window_ts     INTEGER NOT NULL,
-    mode          TEXT    NOT NULL,
-    side          TEXT    NOT NULL,
-    stake_usd     REAL    NOT NULL,
-    t_signal      REAL    NOT NULL,
-    build_ms      REAL,
-    ask_at_signal REAL,
-    ask_at_ready  REAL,
-    drift_cents   REAL,
+    window_ts       INTEGER NOT NULL,
+    mode            TEXT    NOT NULL,
+    side            TEXT    NOT NULL,
+    stake_usd       REAL    NOT NULL,
+    t_signal        REAL    NOT NULL,
+    build_ms        REAL,
+    ask_at_signal   REAL,
+    ask_at_ready    REAL,
+    drift_cents     REAL,
+    input_age_ms    REAL,   -- staleness of the decision inputs at signal time
+    est_roundtrip_ms REAL,  -- input_age + build + warm-POST: the REAL latency
+    ask_drift_1s_cents REAL, -- how far the ask moved 1s after the signal
+    would_fill      INTEGER, -- 1 if a marketable ask+cushion order still clears at +1s
     PRIMARY KEY (window_ts, mode)
 );
 
@@ -116,9 +120,20 @@ class Store:
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.execute("DELETE FROM ticks WHERE ts < ?",
                           (time.time() - TICKS_RETENTION_S,))
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a DB was first created. SQLite has no
+        ADD COLUMN IF NOT EXISTS, so probe the table and add what's missing."""
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(shadow_execs)")}
+        for col, decl in (("input_age_ms", "REAL"), ("est_roundtrip_ms", "REAL"),
+                          ("ask_drift_1s_cents", "REAL"), ("would_fill", "INTEGER")):
+            if col not in have:
+                self.conn.execute(
+                    f"ALTER TABLE shadow_execs ADD COLUMN {col} {decl}")
 
     # ---- windows ----------------------------------------------------------
     def upsert_window(self, window_ts: int, mode: str, **fields) -> None:

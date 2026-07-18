@@ -44,7 +44,8 @@ class BinanceSpot:
         self.on_price = on_price
         self.price: float | None = None
         self.ts: float = 0.0
-        self._host_i = 0
+        self.recv_at: float = 0.0  # local wall time of the latest price — used
+        self._host_i = 0           # to measure input-staleness in the hot path
         self.stop = asyncio.Event()
 
     async def _connect_once(self):
@@ -69,6 +70,7 @@ class BinanceSpot:
                 p = float(d["p"])
                 ts = d["T"] / 1000.0
                 self.price, self.ts = p, ts
+                self.recv_at = time.time()
                 self.on_price(p, ts)
 
     async def run(self):
