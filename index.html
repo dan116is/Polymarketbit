@@ -157,7 +157,9 @@ let current = null;      // {question, slug, endDate, closed, outcomes[], tokens
 let books = {};          // tokenId -> {bids:[{p,s}], asks:[{p,s}]} best-first
 let mids = {};           // tokenId -> midpoint number
 let refreshTimer = null;
+let lastBookRefresh = 0;
 let selectedPaperOutcome = 0;
+let liveValues = {};     // journal item id -> current real sell value (not persisted)
 
 /* ---------------- helpers ---------------- */
 async function getJSON(url){
@@ -180,23 +182,42 @@ function loadJournal(){
 function saveJournal(j){ localStorage.setItem(LS_KEY, JSON.stringify(j)); }
 
 /* ---------------- market finding ---------------- */
+/* 5-minute windows have clock-aligned slugs (…-<unixtime>), so the window
+   running RIGHT NOW can be computed directly instead of trusting the series
+   listing, which sometimes only returns windows hours away. */
+const FIVE_MIN_PREFIX = {
+  'btc-up-or-down-5m': 'btc-updown-5m-',
+  'eth-up-or-down-5m': 'eth-updown-5m-'
+};
+
 async function loadSeries(slug, label){
   const res = document.getElementById('results');
   res.innerHTML = '<div class="spin">טוען שווקים של ' + esc(label) + '...</div>';
   try{
-    const series = await getJSON(GAMMA + '/series?slug=' + encodeURIComponent(slug) + '&limit=1');
-    const events = (series[0] && series[0].events) || [];
-    const now = Date.now();
-    const upcoming = events
-      .filter(e => e.endDate && Date.parse(e.endDate) > now - 60000)
-      .sort((a,b) => Date.parse(a.endDate) - Date.parse(b.endDate))
-      .slice(0, 5);
-    if(!upcoming.length){
+    let items = [];
+    const prefix = FIVE_MIN_PREFIX[slug];
+    if(prefix){
+      const base = Math.floor(Date.now() / 1000 / 300) * 300;
+      const found = await Promise.all([base, base + 300, base + 600].map(t =>
+        getJSON(GAMMA + '/events?slug=' + prefix + t).then(a => a[0]).catch(() => null)));
+      items = found.filter(Boolean).map((e, i) => (e._live = (i === 0), e));
+    }
+    if(!items.length){
+      const series = await getJSON(GAMMA + '/series?slug=' + encodeURIComponent(slug) + '&limit=1');
+      const events = (series[0] && series[0].events) || [];
+      const now = Date.now();
+      items = events
+        .filter(e => e.endDate && Date.parse(e.endDate) > now - 60000)
+        .sort((a,b) => Date.parse(a.endDate) - Date.parse(b.endDate))
+        .slice(0, 5);
+    }
+    if(!items.length){
       res.innerHTML = '<div class="spin">לא נמצאו חלונות פעילים בסדרה הזאת.</div>';
       return;
     }
-    res.innerHTML = upcoming.map(e =>
+    res.innerHTML = items.map(e =>
       '<div class="result-item" onclick="loadEvent(\'' + esc(e.slug) + '\')">' +
+        (e._live ? '<span class="tag" style="color:var(--green);border-color:var(--green)">🔴 רץ עכשיו</span> ' : '') +
         esc(e.title) +
         '<div class="t">נסגר: ' + new Date(e.endDate).toLocaleTimeString('he-IL') + '</div>' +
       '</div>').join('');
@@ -279,8 +300,13 @@ function setMarket(mk, title){
   renderPaperButtons();
   refreshBooks();
   if(refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(refreshBooks, 5000);
-  setInterval(renderCountdown, 1000);
+  // book refresh speeds up to 2s inside the last 90s, when prices move fastest
+  refreshTimer = setInterval(() => {
+    renderCountdown();
+    const msLeft = current && current.endDate ? Date.parse(current.endDate) - Date.now() : Infinity;
+    const wanted = msLeft <= 90000 ? 2000 : 5000;
+    if(Date.now() - lastBookRefresh >= wanted) refreshBooks();
+  }, 1000);
   document.getElementById('marketView').scrollIntoView({behavior:'smooth'});
 }
 
@@ -294,6 +320,7 @@ function normBook(raw){
 
 async function refreshBooks(){
   if(!current) return;
+  lastBookRefresh = Date.now();
   const jobs = current.tokens.map(async t => {
     try{
       const [bk, md] = await Promise.all([
@@ -394,6 +421,14 @@ function renderBooks(){
               '</span> — זה מה שאתה מפסיד מובנה על קנייה+מכירה מיידית.</div>';
     }
 
+    // book depth: top 3 levels each side, so thin markets are visible at a glance
+    const depth = (levels) => levels.slice(0,3).map(l =>
+      '<span class="num">' + cents(l.p) + '</span> × <span class="num">' + Math.round(l.s) + '</span>').join('<br>') || '<span class="red">ריק</span>';
+    html += '<div class="grid2" style="margin-top:8px; font-size:.78rem">' +
+      '<div class="kv" style="text-align:right"><div class="k">קונים אמיתיים (מחיר × כמות)</div>' + depth(bk.bids) + '</div>' +
+      '<div class="kv" style="text-align:right"><div class="k">מוכרים אמיתיים (מחיר × כמות)</div>' + depth(bk.asks) + '</div>' +
+      '</div>';
+
     // the illusion detector
     if(mid != null && mid >= 0.03){
       if(bestBid === 0){
@@ -446,6 +481,7 @@ function logPaperTrade(){
     question: current.question,
     outcome: current.outcomes[selectedPaperOutcome],
     outcomeIndex: selectedPaperOutcome,
+    token: t,
     shares: shares,
     cost: +w.cost.toFixed(4),
     avgPrice: +w.avg.toFixed(4),
@@ -484,6 +520,17 @@ async function checkResults(){
     }catch(e){ /* market not found yet — keep open */ }
   }
   saveJournal(j);
+
+  // for trades still open: fetch the live book and show what they're REALLY worth now
+  liveValues = {};
+  const stillOpen = j.filter(x => x.status === 'open' && x.token);
+  await Promise.all(stillOpen.map(async x => {
+    try{
+      const bk = normBook(await getJSON(CLOB + '/book?token_id=' + x.token));
+      liveValues[x.id] = walkSell(bk.bids, x.shares).proceeds;
+    }catch(e){ /* book gone (market closed) — nothing to show */ }
+  }));
+
   renderJournal();
 }
 
@@ -543,11 +590,16 @@ function renderJournal(){
       '<span class="num">' + x.shares + '</span> מניות @ <span class="num">' + cents(x.avgPrice) + '</span>' +
       ' · עלות <span class="num">' + usd(x.cost) + '</span>' +
       (x.pnl != null ? ' · תוצאה: <b class="num ' + (x.pnl >= 0 ? 'green' : 'red') + '">' + usd(x.pnl) + '</b>' : '') +
+      (x.status === 'open' && liveValues[x.id] != null
+        ? ' · שווי אמיתי עכשיו: <b class="num ' + (liveValues[x.id] >= x.cost ? 'green' : 'red') + '">' +
+          usd(liveValues[x.id]) + '</b>' : '') +
     '</div></div>'
   ).join('');
 }
 
 renderJournal();
+// on load: resolve finished paper trades and price the open ones off the live book
+if(loadJournal().some(x => x.status === 'open')) checkResults();
 </script>
 </body>
 </html>
