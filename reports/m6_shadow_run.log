@@ -1,0 +1,2 @@
+2026-07-17 17:28:25,100 polysignal.feeds INFO oracle RTDS connected
+2026-07-17 17:28:25,522 polysignal.feeds INFO binance connected: wss://data-stream.binance.vision/ws/btcusdt@trade

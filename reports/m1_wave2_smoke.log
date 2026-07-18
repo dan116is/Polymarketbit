@@ -1,0 +1,4 @@
+2026-07-17 09:00:00,360 polysignal.telegram WARNING TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set — alerts disabled
+2026-07-17 09:00:00,361 polysignal.web INFO PWA at http://127.0.0.1:8787
+2026-07-17 09:00:01,314 polysignal.feeds INFO oracle RTDS connected
+2026-07-17 09:00:01,720 polysignal.feeds INFO binance connected: wss://data-stream.binance.vision/ws/btcusdt@trade

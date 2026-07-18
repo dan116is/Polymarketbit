@@ -1,0 +1,12 @@
+2026-07-16 18:45:24,461 polysignal.telegram WARNING TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set — alerts disabled
+2026-07-16 18:45:24,463 polysignal.web INFO PWA at http://127.0.0.1:8787
+2026-07-16 18:45:25,331 polysignal.feeds INFO oracle RTDS connected
+2026-07-16 18:45:25,922 polysignal.feeds INFO binance connected: wss://data-stream.binance.vision/ws/btcusdt@trade
+2026-07-16 18:45:42,697 aiohttp.access INFO 127.0.0.1 [16/Jul/2026:18:45:42 +0000] "GET /health HTTP/1.1" 200 548 "-" "curl/8.5.0"
+2026-07-16 18:45:42,739 aiohttp.access INFO 127.0.0.1 [16/Jul/2026:18:45:42 +0000] "GET / HTTP/1.1" 200 238 "-" "curl/8.5.0"
+2026-07-16 18:45:42,749 aiohttp.access INFO 127.0.0.1 [16/Jul/2026:18:45:42 +0000] "GET /manifest.json HTTP/1.1" 200 243 "-" "curl/8.5.0"
+2026-07-16 18:46:23,623 aiohttp.access INFO 127.0.0.1 [16/Jul/2026:18:46:23 +0000] "GET / HTTP/1.1" 200 238 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36"
+2026-07-16 18:46:23,694 aiohttp.access INFO 127.0.0.1 [16/Jul/2026:18:46:23 +0000] "GET /favicon.ico HTTP/1.1" 404 174 "http://127.0.0.1:8787/" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36"
+2026-07-16 18:46:28,255 aiohttp.access INFO 127.0.0.1 [16/Jul/2026:18:46:23 +0000] "GET /ws HTTP/1.1" 101 0 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36"
+2026-07-16 18:48:30,551 aiohttp.access INFO 127.0.0.1 [16/Jul/2026:18:48:30 +0000] "GET / HTTP/1.1" 200 238 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36"
+2026-07-16 18:48:35,169 aiohttp.access INFO 127.0.0.1 [16/Jul/2026:18:48:30 +0000] "GET /ws HTTP/1.1" 101 0 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36"

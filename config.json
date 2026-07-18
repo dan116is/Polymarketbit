@@ -1,0 +1,51 @@
+{
+  "_comment": "ספים זמניים. theta/buffer/חלון הזמן/half-life נקבעים סופית ב-backtest (M2), לא כאן. את תקרת ההפסד היומית משנה רק דניאל ידנית.",
+  "model": {
+    "theta_cents": 6.0,
+    "buffer_cents": 3.0,
+    "sigma_halflife_s": 60,
+    "sigma_floor": 1e-06,
+    "sigma_window_s": 600,
+    "signal_band_s": [
+      15,
+      120
+    ]
+  },
+  "risk": {
+    "stake_ladder_usd": [
+      1,
+      2,
+      5
+    ],
+    "ladder_step_cents": 4.0,
+    "daily_stop_usd": -10.0,
+    "lock_hours": 24,
+    "cooldown_windows_after_2_losses": 2,
+    "max_positions_per_window": 1,
+    "stake5_requires_gate2": true
+  },
+  "m6": {
+    "_comment": "armed נשאר false עד אישור סופי ידני של דניאל. הבוט מסרב לשלוח בלי: armed + GATE1B + GATE2B ירוקים + מפתח ב-env + אישור RISK.",
+    "armed": false,
+    "max_stake_usd": 1.0,
+    "shadow_enabled": true
+  },
+  "runtime": {
+    "db_path": "data/polysignal.sqlite",
+    "window_seconds": 300,
+    "slug_prefix": "btc-updown-5m",
+    "gamma_base": "https://gamma-api.polymarket.com",
+    "clob_base": "https://clob.polymarket.com",
+    "clob_ws": "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+    "rtds_ws": "wss://ws-live-data.polymarket.com",
+    "binance_ws_hosts": [
+      "wss://data-stream.binance.vision/ws",
+      "wss://stream.binance.com:9443/ws"
+    ],
+    "binance_rest_hosts": [
+      "https://data-api.binance.vision",
+      "https://api.binance.com"
+    ],
+    "book_poll_s": 1.0
+  }
+}

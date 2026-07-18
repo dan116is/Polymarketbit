@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.sqlite
+*.sqlite-*
+*.db
+data/
+logs/
+.pytest_cache/
+.DS_Store
+
+# live engine run log (constantly appended — evidence logs stay tracked)
+reports/m6_shadow_long.log

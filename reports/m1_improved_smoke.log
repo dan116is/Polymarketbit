@@ -1,0 +1,6 @@
+2026-07-17 08:26:39,766 polysignal.telegram WARNING TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set — alerts disabled
+2026-07-17 08:26:39,767 polysignal.web INFO PWA at http://127.0.0.1:8787
+2026-07-17 08:26:40,821 polysignal.feeds INFO oracle RTDS connected
+2026-07-17 08:26:41,230 polysignal.feeds INFO binance connected: wss://data-stream.binance.vision/ws/btcusdt@trade
+2026-07-17 08:27:56,816 aiohttp.access INFO 127.0.0.1 [17/Jul/2026:08:27:56 +0000] "GET / HTTP/1.1" 200 238 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36"
+2026-07-17 08:28:02,481 aiohttp.access INFO 127.0.0.1 [17/Jul/2026:08:27:56 +0000] "GET /ws HTTP/1.1" 101 0 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36"
