@@ -1,0 +1,51 @@
+name: Collect market data
+
+# The background half of the product: this runs on GitHub's machines, not on a
+# phone. Each run samples live windows for ~55 minutes, labels them once they
+# settle, and commits the result so the page can open straight onto real data.
+on:
+  schedule:
+    - cron: '3 * * * *'
+  workflow_dispatch:
+    inputs:
+      duration_sec:
+        description: 'How long to collect, in seconds'
+        default: '3300'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collector
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Collect
+        env:
+          DURATION_SEC: ${{ github.event.inputs.duration_sec || '3300' }}
+          ASSETS: BTC,ETH
+        run: node collector/collect.js
+      - name: Commit data
+        run: |
+          if [ -z "$(git status --porcelain data)" ]; then
+            echo "no new data"
+            exit 0
+          fi
+          git config user.name  "polymarket-collector"
+          git config user.email "actions@github.com"
+          git add data
+          git commit -m "data: collector run $(date -u +%Y-%m-%dT%H:%MZ)"
+          # another run may have landed while this one was collecting
+          for i in 1 2 3 4 5; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep $((i * 5))
+          done
+          exit 1

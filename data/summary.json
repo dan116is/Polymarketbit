@@ -1,0 +1,143 @@
+{
+ "updated": "2026-08-19T19:25:05.911Z",
+ "rows": 21,
+ "windows": 1,
+ "first": "2026-08-19T19:15:07.239Z",
+ "last": "2026-08-19T19:18:39.913Z",
+ "assumptions": {
+  "cost_cents_per_share": 1,
+  "sanity_gap": 0.25,
+  "size_note": "edge priced on the collector SIZE"
+ },
+ "calibration": [
+  {
+   "bucket": "50-60%",
+   "n": 7,
+   "model": 55.4,
+   "actual": 71.4
+  },
+  {
+   "bucket": "60-70%",
+   "n": 6,
+   "model": 63.8,
+   "actual": 100
+  },
+  {
+   "bucket": "70-80%",
+   "n": 4,
+   "model": 76,
+   "actual": 100
+  },
+  {
+   "bucket": "80-90%",
+   "n": 1,
+   "model": 87.5,
+   "actual": 100
+  },
+  {
+   "bucket": "90-100%",
+   "n": 3,
+   "model": 95.9,
+   "actual": 100
+  }
+ ],
+ "edge_by_threshold": [
+  {
+   "threshold_cents": 1,
+   "trades": 1,
+   "hit_rate": 0,
+   "promised_cents": 1.55,
+   "realised_cents": -51.5,
+   "stderr_cents": 0,
+   "t_stat": null
+  },
+  {
+   "threshold_cents": 2,
+   "trades": 1,
+   "hit_rate": 100,
+   "promised_cents": 4.07,
+   "realised_cents": 30.19,
+   "stderr_cents": 0,
+   "t_stat": null
+  },
+  {
+   "threshold_cents": 3,
+   "trades": 1,
+   "hit_rate": 100,
+   "promised_cents": 4.07,
+   "realised_cents": 30.19,
+   "stderr_cents": 0,
+   "t_stat": null
+  },
+  {
+   "threshold_cents": 4,
+   "trades": 1,
+   "hit_rate": 100,
+   "promised_cents": 4.07,
+   "realised_cents": 30.19,
+   "stderr_cents": 0,
+   "t_stat": null
+  },
+  {
+   "threshold_cents": 5,
+   "trades": 1,
+   "hit_rate": 100,
+   "promised_cents": 8.3,
+   "realised_cents": 51.9,
+   "stderr_cents": 0,
+   "t_stat": null
+  },
+  {
+   "threshold_cents": 6,
+   "trades": 1,
+   "hit_rate": 100,
+   "promised_cents": 8.3,
+   "realised_cents": 51.9,
+   "stderr_cents": 0,
+   "t_stat": null
+  }
+ ],
+ "by_phase": [
+  {
+   "secs_left": "240-300",
+   "trades": 0
+  },
+  {
+   "secs_left": "180-240",
+   "trades": 1,
+   "hit_rate": 100,
+   "promised_cents": 4.07,
+   "realised_cents": 30.19,
+   "stderr_cents": 0,
+   "t_stat": null
+  },
+  {
+   "secs_left": "120-180",
+   "trades": 1,
+   "hit_rate": 100,
+   "promised_cents": 4.56,
+   "realised_cents": 47.5,
+   "stderr_cents": 0,
+   "t_stat": null
+  },
+  {
+   "secs_left": "60-120",
+   "trades": 0
+  },
+  {
+   "secs_left": "0-60",
+   "trades": 0
+  }
+ ],
+ "by_asset": [
+  {
+   "asset": "ETH",
+   "trades": 1,
+   "hit_rate": 100,
+   "promised_cents": 4.07,
+   "realised_cents": 30.19,
+   "stderr_cents": 0,
+   "t_stat": null
+  }
+ ]
+}

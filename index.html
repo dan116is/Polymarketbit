@@ -80,6 +80,15 @@
   ועוזר לך לתעד החלטות <b>על הנייר</b> כדי שתראה נתונים אמיתיים לפני שאתה מסכן כסף.
 </div>
 
+<!-- ==================== COLLECTED DATA ==================== -->
+<div class="card" id="dataCard">
+  <div class="outcome-head">
+    <h2 style="margin:0">📡 מה הנתונים אומרים</h2>
+    <span class="tag" id="dataUpdated"></span>
+  </div>
+  <div id="dataBody"><div class="spin">טוען נתונים שנאספו ברקע...</div></div>
+</div>
+
 <!-- ==================== FINDER ==================== -->
 <div class="card" id="finder">
   <h2 style="margin-top:0">1. בחר שוק</h2>
@@ -128,10 +137,36 @@
   </div>
 </div>
 
+<!-- ==================== EDGE ENGINE ==================== -->
+<div class="card hidden" id="edgeCard">
+  <div class="outcome-head">
+    <h2 style="margin:0">2. מנוע היתרון 🧠</h2>
+    <button class="small" onclick="toggleEdgeSettings()">⚙️ הגדרות</button>
+  </div>
+
+  <div id="edgeSettings" class="hidden">
+    <div class="grid2">
+      <div><label>גודל בדיקה (מניות)</label><input id="cfg_size" type="number" inputmode="decimal" oninput="saveCfg()"></div>
+      <div><label>הון לחישוב גודל ($)</label><input id="cfg_bankroll" type="number" inputmode="decimal" oninput="saveCfg()"></div>
+      <div><label>עלויות מסחר (סנט למניה)</label><input id="cfg_cost" type="number" inputmode="decimal" step="0.1" oninput="saveCfg()"></div>
+      <div><label>סף כניסה מינימלי (סנט)</label><input id="cfg_thresh" type="number" inputmode="decimal" step="0.1" oninput="saveCfg()"></div>
+      <div><label>חלק מקלי (0.1 = שמרני)</label><input id="cfg_kelly" type="number" inputmode="decimal" step="0.05" oninput="saveCfg()"></div>
+      <div><label>אי־ודאות פיד (נקודות בסיס)</label><input id="cfg_basis" type="number" inputmode="decimal" step="0.5" oninput="saveCfg()"></div>
+    </div>
+    <div class="dim" style="font-size:.78rem; margin-top:8px">
+      "אי־ודאות פיד" = כמה המחיר שאנחנו מודדים (בורסה חיצונית) יכול להיות שונה מהפיד שמכריע את השוק.
+      זה מה שמונע מהמודל להגיד "99%" כשהוא בכלל לא רואה את מקור ההכרעה האמיתי.
+    </div>
+  </div>
+
+  <div id="ruleBadge"></div>
+  <div id="edgeBody"><div class="spin">מחכה לנתוני מחיר חיצוניים...</div></div>
+</div>
+
 <!-- ==================== JOURNAL ==================== -->
 <div class="card" id="journalCard">
   <div class="outcome-head">
-    <h2 style="margin:0">2. היומן שלך</h2>
+    <h2 style="margin:0">3. היומן שלך</h2>
     <button class="small" onclick="checkResults()">🔄 עדכן תוצאות</button>
   </div>
   <div id="stats"></div>
@@ -139,6 +174,24 @@
   <div id="journal"></div>
   <div class="row" style="margin-top:10px">
     <button class="small danger" onclick="clearJournal()">מחק יומן</button>
+  </div>
+</div>
+
+<!-- ==================== RESEARCH LOG ==================== -->
+<div class="card" id="researchCard">
+  <div class="outcome-head">
+    <h2 style="margin:0">4. מחקר: האם יש יתרון בכלל? 🔬</h2>
+    <button class="small" onclick="resolveResearch()">🔄 עדכן תוצאות</button>
+  </div>
+  <div class="dim" style="font-size:.82rem; margin-bottom:8px">
+    בכל 5 שניות שבהן שוק פתוח על המסך נשמר צילום מצב: המחיר החיצוני, ההסתברות של המודל,
+    והמחיר האמיתי בספר. אחרי שהשוק נסגר נרשמת התוצאה. כך רואים <b>בנתונים</b> אם למודל יש יתרון —
+    לפני שקל אחד אמיתי נכנס.
+  </div>
+  <div id="researchBody"></div>
+  <div class="row" style="margin-top:10px">
+    <button class="small" onclick="exportResearch()">⬇️ ייצוא CSV</button>
+    <button class="small danger" onclick="clearResearch()">מחק מחקר</button>
   </div>
 </div>
 
@@ -180,6 +233,24 @@ function loadJournal(){
   try{ return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); }catch(e){ return []; }
 }
 function saveJournal(j){ localStorage.setItem(LS_KEY, JSON.stringify(j)); }
+
+/* Gamma's /markets?slug= comes back empty for the 5-minute crypto windows even
+   after they settle — a settled window is only reachable through its event.
+   Without this fallback nothing on the page ever resolves. */
+async function fetchMarketBySlug(slug){
+  try{
+    const ms = await getJSON(GAMMA + '/markets?slug=' + encodeURIComponent(slug));
+    if(ms && ms.length) return ms[0];
+  }catch(e){ /* fall through to the event lookup */ }
+  try{
+    const evs = await getJSON(GAMMA + '/events?slug=' + encodeURIComponent(slug));
+    const ev = evs && evs[0];
+    if(ev && ev.markets && ev.markets.length){
+      return ev.markets.find(m => m.slug === slug) || ev.markets[0];
+    }
+  }catch(e){ /* leave it unresolved rather than guess */ }
+  return null;
+}
 
 /* ---------------- market finding ---------------- */
 /* 5-minute windows have clock-aligned slugs (…-<unixtime>), so the window
@@ -290,7 +361,8 @@ function setMarket(mk, title){
     closed: !!mk.closed,
     outcomes: parseArr(mk.outcomes),
     tokens: parseArr(mk.clobTokenIds),
-    conditionId: mk.conditionId
+    conditionId: mk.conditionId,
+    description: mk.description || ''
   };
   books = {}; mids = {};
   document.getElementById('marketView').classList.remove('hidden');
@@ -298,11 +370,14 @@ function setMarket(mk, title){
   document.getElementById('mEnd').textContent =
     current.endDate ? 'נסגר: ' + new Date(current.endDate).toLocaleTimeString('he-IL') : '';
   renderPaperButtons();
+  onMarketSelected();
   refreshBooks();
   if(refreshTimer) clearInterval(refreshTimer);
   // book refresh speeds up to 2s inside the last 90s, when prices move fastest
   refreshTimer = setInterval(() => {
     renderCountdown();
+    renderEdge();
+    maybeLogSnapshot();
     const msLeft = current && current.endDate ? Date.parse(current.endDate) - Date.now() : Infinity;
     const wanted = msLeft <= 90000 ? 2000 : 5000;
     if(Date.now() - lastBookRefresh >= wanted) refreshBooks();
@@ -341,25 +416,13 @@ async function refreshBooks(){
 
 /* walk the book: sell `shares` into bids -> {proceeds, avg, unfilled} */
 function walkSell(bids, shares){
-  let remaining = shares, proceeds = 0;
-  for(const l of bids){
-    if(remaining <= 0) break;
-    const take = Math.min(remaining, l.s);
-    proceeds += take * l.p;
-    remaining -= take;
-  }
-  return {proceeds, avg: shares > remaining ? proceeds / (shares - remaining) : 0, unfilled: remaining};
+  const w = walkBook(bids, shares);
+  return {proceeds:w.total, avg:w.avg, unfilled:w.unfilled};
 }
 /* buy `shares` from asks -> {cost, avg, unfilled} */
 function walkBuy(asks, shares){
-  let remaining = shares, cost = 0;
-  for(const l of asks){
-    if(remaining <= 0) break;
-    const take = Math.min(remaining, l.s);
-    cost += take * l.p;
-    remaining -= take;
-  }
-  return {cost, avg: shares > remaining ? cost / (shares - remaining) : 0, unfilled: remaining};
+  const w = walkBook(asks, shares);
+  return {cost:w.total, avg:w.avg, unfilled:w.unfilled};
 }
 
 function renderCountdown(){
@@ -500,8 +563,7 @@ async function checkResults(){
   const slugs = [...new Set(open.map(x => x.slug))];
   for(const slug of slugs){
     try{
-      const ms = await getJSON(GAMMA + '/markets?slug=' + encodeURIComponent(slug));
-      const mk = ms[0];
+      const mk = await fetchMarketBySlug(slug);
       if(!mk || !mk.closed) continue;
       const prices = parseArr(mk.outcomePrices).map(Number);
       const winIdx = prices.findIndex(p => p >= 0.99);
@@ -596,6 +658,719 @@ function renderJournal(){
     '</div></div>'
   ).join('');
 }
+
+/* ==================== EDGE ENGINE (מנוע היתרון) ====================
+   Key fact this engine is built on, read straight from the market rules:
+   the 5m/15m crypto windows do NOT settle on the last price. They settle on
+   the Chainlink TWAP over the window versus the price at its start. The
+   average of a path has roughly a third of the variance of its endpoint, so
+   scoring these windows like a normal "will it end higher" bet is wrong in a
+   direction that is measurable. The hourly markets are the opposite: they
+   settle close-vs-open on a Binance USDT candle, i.e. really the endpoint.
+   The engine picks the model from the rules text, then logs every estimate
+   against the real outcome so the edge can be proven instead of assumed. */
+
+const RESEARCH_KEY = 'pmtruth_research_v1';
+const REFS_KEY     = 'pmtruth_winrefs_v1';
+const CFG_KEY      = 'pmtruth_cfg_v1';
+const COINBASE = 'https://api.exchange.coinbase.com';
+const BINANCE  = 'https://api.binance.com';
+const KRAKEN   = 'https://api.kraken.com';
+const SIGMA_DEFAULT = 7e-5;   // ~40% annualised, expressed per √second
+const MAX_SNAPSHOTS = 4000;
+const MAX_BANKROLL_SHARE = 0.05;  // hard cap: never more than 5% of bankroll in one window
+
+const ASSETS = {
+  BTC: {cb:'BTC-USD',  bn:'BTCUSDT',  kr:'XBTUSD'},
+  ETH: {cb:'ETH-USD',  bn:'ETHUSDT',  kr:'ETHUSD'},
+  SOL: {cb:'SOL-USD',  bn:'SOLUSDT',  kr:'SOLUSD'},
+  XRP: {cb:'XRP-USD',  bn:'XRPUSDT',  kr:'XRPUSD'},
+  DOGE:{cb:'DOGE-USD', bn:'DOGEUSDT', kr:'XDGUSD'}
+};
+
+let feed = {key:null, asset:null, src:'—', samples:[], timer:null, err:null, busy:false};
+let settle = {type:'terminal', feedName:'—', prefer:'cb'};
+let lastSnapshot = 0;
+let refBusy = false;
+
+/* ---------------- settings ---------------- */
+const CFG_DEF = {size:100, bankroll:100, cost:1.0, thresh:3.0, kelly:0.2, basis:3};
+function cfg(){
+  try{ return Object.assign({}, CFG_DEF, JSON.parse(localStorage.getItem(CFG_KEY) || '{}')); }
+  catch(e){ return Object.assign({}, CFG_DEF); }
+}
+function saveCfg(){
+  const c = {};
+  for(const k of Object.keys(CFG_DEF)){
+    const el = document.getElementById('cfg_' + k);
+    const v = el ? parseFloat(el.value) : NaN;
+    c[k] = isFinite(v) ? v : CFG_DEF[k];
+  }
+  localStorage.setItem(CFG_KEY, JSON.stringify(c));
+  renderEdge();
+}
+function fillCfg(){
+  const c = cfg();
+  for(const k of Object.keys(CFG_DEF)){
+    const el = document.getElementById('cfg_' + k);
+    if(el) el.value = c[k];
+  }
+}
+function toggleEdgeSettings(){
+  document.getElementById('edgeSettings').classList.toggle('hidden');
+}
+
+/* ---------------- math ---------------- */
+function mean(a){ return a.length ? a.reduce((x,y) => x+y, 0) / a.length : 0; }
+
+/* ===== MODEL-START =====
+   Everything between these markers is pure: no DOM, no globals, no network.
+   collector/collect.js reads this exact block out of this file and runs it,
+   so the numbers the background collector records and the numbers on screen
+   can never drift apart. Editing here changes both. */
+function erf(x){                       // Abramowitz & Stegun 7.1.26
+  const s = x < 0 ? -1 : 1; x = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - ((((1.061405429*t - 1.453152027)*t + 1.421413741)*t - 0.284496736)*t + 0.254829592)*t*Math.exp(-x*x);
+  return s * y;
+}
+function Phi(z){ return 0.5 * (1 + erf(z / Math.SQRT2)); }
+
+/* Probability that the market resolves "Up".
+   o = {type, K, S, A, elapsed, remaining, T, sigma, basisBp}
+   type 'twap'     — settles on the average over the window (Chainlink 5m/15m).
+                     The elapsed part of the average is already locked in; only
+                     the remaining stretch is still random, and the average of
+                     that stretch has a third of the variance of its endpoint.
+   type 'terminal' — settles on the closing price (hourly candle markets). */
+function fairProbability(o){
+  const T = o.T, r = Math.max(0, o.remaining), e = Math.max(0, Math.min(T, o.elapsed));
+  let projected, sd;
+  if(o.type === 'twap'){
+    projected = (e * o.A + r * o.S) / T;
+    sd = o.S * o.sigma * Math.pow(r, 1.5) / (Math.sqrt(3) * T);
+  }else{
+    projected = o.S;
+    sd = o.S * o.sigma * Math.sqrt(r);
+  }
+  const basis = o.S * ((o.basisBp || 0) / 10000);   // our feed is not the resolution feed
+  const sdTot = Math.sqrt(sd*sd + basis*basis);
+  const z = (projected - o.K) / (sdTot || 1e-9);
+  return {pUp: Math.min(0.999, Math.max(0.001, Phi(z))), projected, sd:sdTot, z};
+}
+
+/* Walk one side of the book for `shares`: what the whole size really costs. */
+function walkBook(levels, shares){
+  let remaining = shares, total = 0;
+  for(const l of (levels || [])){
+    if(remaining <= 0) break;
+    const take = Math.min(remaining, l.s);
+    total += take * l.p;
+    remaining -= take;
+  }
+  return {total, avg: shares > remaining ? total / (shares - remaining) : 0, unfilled: remaining};
+}
+
+/* Fractional Kelly with a hard cap on the share of bankroll per window. */
+function kellyFraction(p, price, fraction, cap){
+  if(!(price > 0 && price < 1)) return 0;
+  const b = (1 - price) / price;
+  const f = (b * p - (1 - p)) / b;
+  if(f <= 0) return 0;
+  return Math.min(f * fraction, cap);
+}
+/* ===== MODEL-END ===== */
+
+/* ---------------- market classification ---------------- */
+function detectAsset(txt){
+  const s = (txt || '').toLowerCase();
+  if(/bitcoin|btc/.test(s))       return Object.assign({sym:'BTC'},  ASSETS.BTC);
+  if(/ethereum|ether|eth/.test(s))return Object.assign({sym:'ETH'},  ASSETS.ETH);
+  if(/solana|sol\b/.test(s))      return Object.assign({sym:'SOL'},  ASSETS.SOL);
+  if(/ripple|xrp/.test(s))        return Object.assign({sym:'XRP'},  ASSETS.XRP);
+  if(/dogecoin|doge/.test(s))     return Object.assign({sym:'DOGE'}, ASSETS.DOGE);
+  return null;
+}
+function detectSettlement(desc){
+  const d = desc || '';
+  if(/TWAP/i.test(d))   return {type:'twap', feedName:'Chainlink TWAP 60s', prefer:'cb'};
+  if(/candle/i.test(d)) return {type:'terminal',
+                                feedName: /USDT/i.test(d) ? 'נר Binance USDT' : 'נר בורסה',
+                                prefer: /USDT/i.test(d) ? 'bn' : 'cb'};
+  return {type:'terminal', feedName:'לא זוהה בכללי השוק', prefer:'cb'};
+}
+function upIndex(){
+  const i = (current.outcomes || []).findIndex(o => /up|yes|עלייה/i.test(o));
+  return i < 0 ? 0 : i;
+}
+/* window start: 5m/15m slugs carry the aligned unix start; hourly is an hour back */
+function windowInfo(){
+  if(!current || !current.endDate) return null;
+  const endTs = Date.parse(current.endDate);
+  const m = (current.slug || '').match(/-(\d{9,11})$/);
+  let startTs = m ? +m[1] * 1000 : null;
+  if(!startTs){
+    const d = current.description || '';
+    const hours = /1 hour candle|hourly/i.test(d) || /hourly/i.test(current.slug || '');
+    startTs = endTs - (hours ? 3600000 : 300000);
+  }
+  return {startTs, endTs, T:(endTs - startTs) / 1000};
+}
+
+/* ---------------- external price feed ---------------- */
+async function fetchSpot(){
+  const a = feed.asset;
+  if(!a) return null;
+  const order = settle.prefer === 'bn' ? ['bn','cb','kr'] : ['cb','bn','kr'];
+  for(const s of order){
+    try{
+      if(s === 'cb'){
+        const d = await getJSON(COINBASE + '/products/' + a.cb + '/ticker');
+        if(+d.price > 0) return {p:+d.price, src:'Coinbase ' + a.cb};
+      }else if(s === 'bn'){
+        const d = await getJSON(BINANCE + '/api/v3/ticker/price?symbol=' + a.bn);
+        if(+d.price > 0) return {p:+d.price, src:'Binance ' + a.bn};
+      }else{
+        const d = await getJSON(KRAKEN + '/0/public/Ticker?pair=' + a.kr);
+        const k = Object.keys(d.result || {})[0];
+        const p = k ? +d.result[k].c[0] : 0;
+        if(p > 0) return {p, src:'Kraken ' + a.kr};
+      }
+    }catch(e){ /* try the next source */ }
+  }
+  return null;
+}
+
+/* seed with 1-minute closes so the model works from the first second,
+   instead of waiting minutes to collect its own history */
+async function seedFeed(){
+  const a = feed.asset;
+  if(!a) return;
+  try{
+    const rows = await getJSON(COINBASE + '/products/' + a.cb + '/candles?granularity=60');
+    const seeded = (rows || []).slice(0, 40)
+      .map(r => ({t:(r[0] + 60) * 1000, p:+r[4], seed:true}))
+      .filter(x => x.t <= Date.now() && x.p > 0)
+      .sort((x,y) => x.t - y.t);
+    feed.samples = seeded.concat(feed.samples).sort((x,y) => x.t - y.t);
+  }catch(e){ /* live ticks will fill in */ }
+}
+
+async function tickFeed(){
+  if(feed.busy || !feed.asset) return;
+  feed.busy = true;
+  const r = await fetchSpot();
+  feed.busy = false;
+  if(!r){ feed.err = 'אין חיבור לבורסה חיצונית'; return; }
+  feed.err = null;
+  feed.src = r.src;
+  feed.samples.push({t:Date.now(), p:r.p});
+  const cutoff = Date.now() - 45 * 60 * 1000;
+  while(feed.samples.length && feed.samples[0].t < cutoff) feed.samples.shift();
+  ensureRef();
+}
+
+function startFeed(asset){
+  if(feed.timer && feed.key === asset.sym) return;
+  if(feed.timer) clearInterval(feed.timer);
+  feed = {key:asset.sym, asset, src:'—', samples:[], timer:null, err:null, busy:false};
+  seedFeed().then(tickFeed);
+  feed.timer = setInterval(tickFeed, 2000);
+}
+
+/* realised volatility from our own samples, per √second */
+function estSigmaPerSec(){
+  const pts = [];
+  let last = null;
+  for(const x of feed.samples){
+    if(!last || x.t - last.t >= 8000){ pts.push(x); last = x; }
+  }
+  if(pts.length < 10) return null;
+  const rets = [];
+  for(let i = 1; i < pts.length; i++){
+    const dt = (pts[i].t - pts[i-1].t) / 1000;
+    if(dt <= 0 || pts[i].p <= 0 || pts[i-1].p <= 0) continue;
+    rets.push(Math.log(pts[i].p / pts[i-1].p) / Math.sqrt(dt));
+  }
+  if(rets.length < 8) return null;
+  const m = mean(rets);
+  const v = rets.reduce((s,x) => s + (x-m)*(x-m), 0) / (rets.length - 1);
+  const sd = Math.sqrt(v);
+  return sd > 0 ? sd : null;
+}
+
+/* ---------------- window reference price (the "opening" the market compares to) ---------------- */
+function loadRefs(){ try{ return JSON.parse(localStorage.getItem(REFS_KEY) || '{}'); }catch(e){ return {}; } }
+function saveRefs(r){
+  const keys = Object.keys(r);
+  if(keys.length > 200){ keys.sort(); for(const k of keys.slice(0, keys.length - 200)) delete r[k]; }
+  localStorage.setItem(REFS_KEY, JSON.stringify(r));
+}
+async function ensureRef(){
+  if(!current || refBusy || !feed.asset) return;
+  const win = windowInfo();
+  if(!win) return;
+  const key = current.slug;
+  const refs = loadRefs();
+  const cur = refs[key];
+  // best case: we were already sampling before the window opened
+  const pre = feed.samples.filter(x => !x.seed && x.t >= win.startTs - 62000 && x.t <= win.startTs + 2000);
+  if(pre.length >= 8){
+    if(!cur || cur.q !== 'measured'){
+      refs[key] = {K:mean(pre.map(x => x.p)), q:'measured'};
+      saveRefs(refs);
+    }
+    return;
+  }
+  if(cur) return;
+  refBusy = true;
+  try{
+    const st = new Date(win.startTs - 120000).toISOString();
+    const en = new Date(win.startTs + 120000).toISOString();
+    const rows = await getJSON(COINBASE + '/products/' + feed.asset.cb +
+                               '/candles?granularity=60&start=' + st + '&end=' + en);
+    const row = (rows || []).find(r => Math.abs(r[0] * 1000 - win.startTs) < 30000);
+    if(row){
+      const r2 = loadRefs();
+      r2[key] = {K:+row[3], q:'approx'};   // [time, low, high, open, close, vol]
+      saveRefs(r2);
+    }
+  }catch(e){ /* stay without a reference rather than invent one */ }
+  refBusy = false;
+}
+
+/* ---------------- fair value ---------------- */
+function computeFair(){
+  if(!current) return null;
+  const win = windowInfo();
+  if(!win) return null;
+  const ref = loadRefs()[current.slug];
+  const S = feed.samples.length ? feed.samples[feed.samples.length - 1].p : null;
+  if(!ref || !S) return {win, missing:true};
+
+  const now = Date.now();
+  const T = win.T;
+  const r = Math.max(0, (win.endTs - now) / 1000);
+  const e = Math.max(0, Math.min(T, T - r));
+  let sigma = estSigmaPerSec();
+  const sigQ = sigma ? 'נמדד' : 'ברירת מחדל';
+  if(!sigma) sigma = SIGMA_DEFAULT;
+
+  const inWin = feed.samples.filter(x => x.t >= win.startTs && x.t <= now).map(x => x.p);
+  const A = inWin.length ? mean(inWin) : S;
+
+  const m = fairProbability({type:settle.type, K:ref.K, S, A, elapsed:e, remaining:r, T,
+                             sigma, basisBp:cfg().basis});
+
+  return {win, ref, S, A, projected:m.projected, sigma, sigQ, sd:m.sd, z:m.z, pUp:m.pUp,
+          r, e, T, nWin:inWin.length};
+}
+
+/* fractional Kelly, hard-capped, and never bigger than the book can fill */
+function kellyShares(p, price, c){
+  const frac = kellyFraction(p, price, c.kelly, MAX_BANKROLL_SHARE);
+  return frac > 0 ? frac * c.bankroll / price : 0;
+}
+
+/* ---------------- render ---------------- */
+function onMarketSelected(){
+  settle = detectSettlement(current.description);
+  const a = detectAsset((current.question || '') + ' ' + (current.slug || '') + ' ' + (current.description || ''));
+  document.getElementById('edgeCard').classList.remove('hidden');
+  if(a) startFeed(a);
+  ensureRef();
+  renderEdge();
+}
+
+function renderEdge(){
+  const card = document.getElementById('edgeCard');
+  if(!current){ card.classList.add('hidden'); return; }
+  const c = cfg();
+
+  document.getElementById('ruleBadge').innerHTML = settle.type === 'twap'
+    ? '<div class="banner" style="margin-bottom:10px">🧠 <b>כלל ההכרעה כאן הוא ממוצע (TWAP) — לא המחיר בסוף.</b> ' +
+      'השוק מוכרע לפי ממוצע המחיר לאורך כל החלון מול המחיר בתחילתו, לפי Chainlink. ' +
+      'לממוצע יש כשליש מהשונות של המחיר הסופי, ולכן מי שמחשב "האם המחיר יהיה גבוה בסוף" — טועה באופן שיטתי.</div>'
+    : '<div class="banner" style="margin-bottom:10px">📏 כלל ההכרעה: סגירה מול פתיחה (' + esc(settle.feedName) + '). ' +
+      'כאן קובע המחיר בסוף, ולכן המודל שונה מזה של חלונות ה־TWAP.</div>';
+
+  const body = document.getElementById('edgeBody');
+  if(!feed.asset){
+    body.innerHTML = '<div class="verdict dim">לא זוהה נכס קריפטו בשוק הזה — מנוע היתרון עובד על BTC/ETH/SOL/XRP/DOGE.</div>';
+    return;
+  }
+  const f = computeFair();
+  if(!f){ body.innerHTML = '<div class="spin">טוען...</div>'; return; }
+
+  let html = '<div class="dim" style="font-size:.8rem; margin-bottom:8px">' +
+    'מקור מחיר חי: <b>' + esc(feed.src) + '</b> · דגימות: <span class="num">' + feed.samples.length + '</span>' +
+    (feed.err ? ' · <span class="red">' + esc(feed.err) + '</span>' : '') +
+    '<br>מקור ההכרעה של השוק: <b>' + esc(settle.feedName) + '</b> — אנחנו מודדים <b>קירוב</b> שלו, לא אותו עצמו.</div>';
+
+  if(f.missing){
+    body.innerHTML = html + '<div class="verdict dim">אוסף נתונים... צריך מחיר פתיחה לחלון ומחיר חי כדי לחשב.</div>';
+    return;
+  }
+
+  const pUp = f.pUp, ui = upIndex();
+  const pctVolMin = (f.sigma * Math.sqrt(60) * 100).toFixed(3);
+
+  html += '<div class="grid2">' +
+    '<div class="kv"><div class="k">הסתברות המודל: ' + esc(current.outcomes[ui] || 'Up') + '</div>' +
+      '<div class="v num">' + (pUp*100).toFixed(1) + '%</div></div>' +
+    '<div class="kv"><div class="k">' + esc(current.outcomes[1-ui] || 'Down') + '</div>' +
+      '<div class="v num">' + ((1-pUp)*100).toFixed(1) + '%</div></div>' +
+    '</div>';
+
+  html += '<div class="statgrid" style="font-size:.8rem">' +
+    '<div class="kv"><div class="k">מחיר פתיחה (K)</div><div class="v num" style="font-size:.95rem">' + f.ref.K.toFixed(1) + '</div></div>' +
+    '<div class="kv"><div class="k">' + (settle.type === 'twap' ? 'ממוצע צפוי' : 'מחיר חי') + '</div>' +
+      '<div class="v num" style="font-size:.95rem">' + f.projected.toFixed(1) + '</div></div>' +
+    '<div class="kv"><div class="k">נותרו</div><div class="v num" style="font-size:.95rem">' + Math.round(f.r) + 's</div></div>' +
+    '</div>';
+
+  html += '<div class="dim" style="font-size:.78rem; margin-top:6px">' +
+    'תנודתיות נמדדת: <span class="num">' + pctVolMin + '%</span> לדקה (' + esc(f.sigQ) + ') · ' +
+    'מחיר פתיחה: ' + (f.ref.q === 'measured' ? 'נמדד ישירות' : '<span class="amber">קירוב מנר דקה</span>') + '</div>';
+
+  // executable edge, side by side with the real book
+  const size = Math.max(1, c.size);
+  let best = null;
+  html += '<h2 style="margin-bottom:6px">יתרון בר־ביצוע (' + size + ' מניות)</h2>';
+  current.tokens.forEach((t, i) => {
+    const name = current.outcomes[i] || ('תוצאה ' + (i+1));
+    const fair = i === ui ? pUp : 1 - pUp;
+    const bk = books[t];
+    html += '<div class="card" style="background:var(--card2); margin-top:8px">';
+    html += '<div class="outcome-head"><b>' + esc(name) + '</b><span class="tag">הוגן: <span class="num">' +
+            cents(fair) + '</span></span></div>';
+    if(!bk || !bk.asks.length){
+      html += '<div class="dim">אין מוכרים בספר — אי אפשר לקנות בשום מחיר.</div></div>';
+      return;
+    }
+    const w = walkBuy(bk.asks, size);
+    if(w.unfilled > 0){
+      const maxFill = Math.floor(size - w.unfilled);
+      html += '<div class="red">הספר מספיק רק ל־<span class="num">' + maxFill + '</span> מניות מתוך ' + size + '.</div>';
+    }
+    const avg = w.avg > 0 ? w.avg : bk.asks[0].p;
+    const edge = fair - avg - c.cost/100;
+    if(!best || edge > best.edge) best = {i, name, edge, avg, fair};
+    html += '<div class="grid2">' +
+      '<div class="kv"><div class="k">מחיר ממוצע אמיתי</div><div class="v num" style="font-size:1rem">' + cents(avg) + '</div></div>' +
+      '<div class="kv"><div class="k">יתרון אחרי עלויות</div><div class="v num ' + (edge > 0 ? 'green' : 'red') +
+        '" style="font-size:1rem">' + (edge >= 0 ? '+' : '') + (edge*100).toFixed(1) + '¢</div></div>' +
+      '</div>';
+    html += '<div class="dim" style="font-size:.75rem; margin-top:6px">הצעה טובה ביותר: ' + cents(bk.asks[0].p) +
+            ' · אחרי ' + size + ' מניות המחיר הממוצע כבר ' + cents(avg) + '</div>';
+    html += '</div>';
+  });
+
+  // verdict + sizing
+  if(best){
+    // a 25¢ disagreement with the whole market is almost always our own data
+    // being wrong (stale book, wrong opening price, wrong feed) — not free money
+    const mid = mids[current.tokens[best.i]];
+    const suspicious = mid != null && Math.abs(best.fair - mid) > 0.25;
+    const clears = best.edge * 100 >= c.thresh && !suspicious;
+    let shares = clears ? kellyShares(best.fair, best.avg, c) : 0;
+    const bk = books[current.tokens[best.i]];
+    if(shares > 0 && bk){
+      const depth = bk.asks.reduce((s,l) => s + l.s, 0);
+      shares = Math.min(shares, depth);
+    }
+    if(suspicious){
+      html += '<div class="warn">🛑 <b>פער חשוד של ' + Math.abs((best.fair - mid)*100).toFixed(0) + '¢ מול כל השוק.</b> ' +
+              'כשהמודל חולק על כל המשתתפים בשוק בפער כזה, ההסבר הסביר הוא שהנתונים <b>שלנו</b> שגויים ' +
+              '(ספר ישן, מחיר פתיחה לא נכון, פיד לא מתאים) — לא שנפלה מציאה. אין עסקה.</div>';
+    }
+    html += '<div class="verdict">' + (clears
+      ? '✅ <b>' + esc(best.name) + '</b> — יתרון של <b class="num green">' + (best.edge*100).toFixed(1) + '¢</b> אחרי עלויות. ' +
+        'גודל מוצע (קלי חלקי, תקרה של ' + (MAX_BANKROLL_SHARE*100) + '% מההון): <b class="num">' + Math.floor(shares) + '</b> מניות ' +
+        '≈ <b class="num">' + usd(shares * best.avg) + '</b>.'
+      : '⛔ <b>אין עסקה.</b> היתרון הטוב ביותר הוא <span class="num">' + (best.edge*100).toFixed(1) + '¢</span> — מתחת לסף של ' +
+        c.thresh + '¢. הרוב המוחלט של הזמן זה מה שצריך להופיע כאן.') + '</div>';
+  }
+
+  const warn = [];
+  const band = bandFor(c.thresh);
+  if(band && band.trades >= 50 && band.realised_cents <= 0){
+    warn.push('הנתונים שנאספו (' + band.trades + ' עסקאות בסף ' + band.threshold_cents + '¢) מראים ' +
+              band.realised_cents + '¢ למניה — הכלל הזה הפסיד בעבר. אות ירוק כאן הוא לא אישור.');
+  }
+  if(f.ref.q !== 'measured') warn.push('מחיר הפתיחה הוא קירוב מנר של דקה — השאר את הכלי פתוח לפני תחילת החלון כדי שיימדד ישירות.');
+  if(f.sigQ !== 'נמדד') warn.push('התנודתיות היא ברירת מחדל ולא מדידה — צריך עוד דקות של דגימות.');
+  if(f.r < 20) warn.push('פחות מ־20 שניות לסיום: המודל נעשה קיצוני והנזילות נעלמת. זה החלק היקר של הלוח.');
+  if(warn.length){
+    html += '<div class="warn" style="font-size:.82rem">⚠️ ' + warn.map(esc).join('<br>⚠️ ') + '</div>';
+  }
+  body.innerHTML = html;
+}
+
+/* ---------------- collected data (filled by the background collector) ----------------
+   The collector runs on GitHub Actions every hour and commits data/summary.json.
+   The page reads it on open, so the first thing anyone sees is what actually
+   happened over hundreds of real windows — not a promise. */
+const SUMMARY_SOURCES = [
+  'data/summary.json',
+  'https://raw.githubusercontent.com/dan116is/Polymarketbit/main/data/summary.json'
+];
+let summary = null;
+
+async function loadSummary(){
+  // a relative fetch throws outright when the page is opened from a file:// path,
+  // so downloaded copies go straight to the published data
+  const sources = location.protocol === 'file:'
+    ? SUMMARY_SOURCES.filter(s => /^https?:/.test(s))
+    : SUMMARY_SOURCES;
+  for(const src of sources){
+    try{
+      const s = await getJSON(src + '?v=' + Date.now());
+      if(s && s.rows != null){ summary = s; break; }
+    }catch(e){ /* try the next source */ }
+  }
+  renderSummary();
+}
+
+/* the threshold band with the best lower bound (realised minus one standard error) */
+function bestBand(){
+  const rows = summary ? (summary.edge_by_threshold || []).filter(r => r.trades >= 30) : [];
+  if(!rows.length) return null;
+  return rows.reduce((a,b) =>
+    (b.realised_cents - b.stderr_cents) > (a.realised_cents - a.stderr_cents) ? b : a);
+}
+/* what the collected data says about the threshold the user is actually running */
+function bandFor(threshC){
+  if(!summary) return null;
+  const rows = (summary.edge_by_threshold || []).filter(r => r.trades > 0);
+  if(!rows.length) return null;
+  return rows.reduce((a,b) =>
+    Math.abs(b.threshold_cents - threshC) < Math.abs(a.threshold_cents - threshC) ? b : a);
+}
+
+function renderSummary(){
+  const body = document.getElementById('dataBody');
+  const tag = document.getElementById('dataUpdated');
+  if(!summary){
+    tag.textContent = '';
+    body.innerHTML = '<div class="verdict dim">עוד לא נאספו נתונים. האוסף רץ אוטומטית ב־GitHub Actions כל שעה ' +
+      'ומעדכן את הקובץ <span class="num">data/summary.json</span> — הדף קורא אותו לבד.</div>';
+    return;
+  }
+  const ageMin = Math.round((Date.now() - Date.parse(summary.updated)) / 60000);
+  tag.textContent = 'עודכן לפני ' + (ageMin < 90 ? ageMin + ' דק׳' : Math.round(ageMin/60) + ' שע׳');
+
+  let html = '<div class="statgrid">' +
+    '<div class="kv"><div class="k">חלונות שנאספו</div><div class="v num">' + summary.windows + '</div></div>' +
+    '<div class="kv"><div class="k">צילומי מצב</div><div class="v num">' + summary.rows + '</div></div>' +
+    '<div class="kv"><div class="k">עלות מונחת</div><div class="v num">' +
+      (summary.assumptions ? summary.assumptions.cost_cents_per_share : '—') + '¢</div></div>' +
+    '</div>';
+
+  const band = bestBand();
+  if(!band){
+    html += '<div class="verdict amber">⏳ <b>עוד אוסף.</b> צריך לפחות 30 עסקאות בסף אחד לפני שאפשר להגיד משהו. ' +
+      'עד אז — לא להיכנס עם כסף.</div>';
+  }else{
+    const strong = band.realised_cents > 0 && band.t_stat >= 2;
+    const weak = band.realised_cents > 0 && band.t_stat < 2;
+    html += '<div class="verdict">' + (strong
+      ? '✅ <b class="green">יש יתרון מדיד.</b> בסף של ' + band.threshold_cents + '¢: ' +
+        '<b class="num green">' + band.realised_cents.toFixed(1) + '¢</b> למניה על פני <span class="num">' +
+        band.trades + '</span> עסקאות (±' + band.stderr_cents.toFixed(1) + '¢, t=' + band.t_stat + ').'
+      : weak
+      ? '🟡 <b class="amber">נטייה חיובית, לא מובהקת.</b> בסף של ' + band.threshold_cents + '¢: ' +
+        '<span class="num">' + band.realised_cents.toFixed(1) + '¢</span> למניה ב־<span class="num">' + band.trades +
+        '</span> עסקאות, אבל הרעש (±' + band.stderr_cents.toFixed(1) + '¢) עדיין גדול מהאות. צריך עוד נתונים.'
+      : '⛔ <b class="red">אין יתרון.</b> הסף הטוב ביותר מחזיר <span class="num">' + band.realised_cents.toFixed(1) +
+        '¢</span> למניה ב־<span class="num">' + band.trades + '</span> עסקאות. הכלל הזה מפסיד כסף.') +
+      '</div>';
+  }
+
+  const rows = (summary.edge_by_threshold || []).filter(r => r.trades > 0);
+  if(rows.length){
+    html += '<h2 style="margin-bottom:4px">רווח למניה לפי סף כניסה</h2>' +
+      rows.map(r => '<div class="journal-item">סף <b>' + r.threshold_cents + '¢</b> · ' +
+        'עסקאות <span class="num">' + r.trades + '</span> · פגיעה <span class="num">' + r.hit_rate + '%</span> · ' +
+        'הובטח <span class="num">' + r.promised_cents + '¢</span> · יצא <b class="num ' +
+        (r.realised_cents > 0 ? 'green' : 'red') + '">' + r.realised_cents + '¢</b> ' +
+        '<span class="dim">±' + r.stderr_cents + '</span></div>').join('');
+  }
+  const cal = (summary.calibration || []).filter(c => c.n >= 10);
+  if(cal.length){
+    html += '<h2 style="margin-bottom:4px">כיול על נתונים אמיתיים</h2>' +
+      cal.map(c => '<div class="journal-item"><b>' + esc(c.bucket) + '</b> · n=<span class="num">' + c.n +
+        '</span> · המודל <span class="num">' + c.model + '%</span> · בפועל <b class="num ' +
+        (Math.abs(c.actual - c.model) <= 7 ? 'green' : 'red') + '">' + c.actual + '%</b></div>').join('');
+  }
+  body.innerHTML = html;
+}
+
+/* ---------------- research log ---------------- */
+function loadResearch(){ try{ return JSON.parse(localStorage.getItem(RESEARCH_KEY) || '[]'); }catch(e){ return []; } }
+function saveResearch(a){ localStorage.setItem(RESEARCH_KEY, JSON.stringify(a.slice(-MAX_SNAPSHOTS))); }
+
+function maybeLogSnapshot(){
+  if(!current || Date.now() - lastSnapshot < 5000) return;
+  const f = computeFair();
+  if(!f || f.missing || f.r <= 0) return;
+  const size = Math.max(1, cfg().size);
+  const ex = current.tokens.map(t => {
+    const bk = books[t];
+    if(!bk || !bk.asks.length) return null;
+    const w = walkBuy(bk.asks, size);
+    return w.unfilled > 0 ? null : +w.avg.toFixed(4);
+  });
+  const bd = current.tokens.map(t => {
+    const bk = books[t];
+    return bk && bk.bids.length ? bk.bids[0].p : 0;
+  });
+  lastSnapshot = Date.now();
+  const arr = loadResearch();
+  arr.push({
+    ts:Date.now(), slug:current.slug, end:Date.parse(current.endDate),
+    out:(current.outcomes || []).join('|'), ui:upIndex(), st:settle.type,
+    K:+f.ref.K.toFixed(2), S:+f.S.toFixed(2), A:+f.A.toFixed(2), rq:f.ref.q,
+    sg:+(f.sigma * 1e6).toFixed(1), r:Math.round(f.r), p:+f.pUp.toFixed(4),
+    ex, bd, md:current.tokens.map(t => mids[t] != null ? +mids[t] : null), res:null
+  });
+  saveResearch(arr);
+  // the research panel is a full recompute over the whole log — every snapshot
+  // is too often once the log is thousands of rows deep
+  if(arr.length % 6 === 0) renderResearch();
+}
+
+async function resolveResearch(){
+  const arr = loadResearch();
+  const pending = [...new Set(arr.filter(x => x.res == null && x.end < Date.now() - 30000).map(x => x.slug))];
+  for(const slug of pending.slice(0, 25)){
+    try{
+      const mk = await fetchMarketBySlug(slug);
+      if(!mk || !mk.closed) continue;
+      const prices = parseArr(mk.outcomePrices).map(Number);
+      const w = prices.findIndex(p => p >= 0.99);
+      if(w < 0) continue;
+      for(const x of arr) if(x.slug === slug && x.res == null) x.res = w;
+    }catch(e){ /* not resolved yet */ }
+  }
+  saveResearch(arr);
+  renderResearch();
+}
+
+function renderResearch(){
+  const wrap = document.getElementById('researchBody');
+  const arr = loadResearch();
+  if(!arr.length){
+    wrap.innerHTML = '<div class="spin">אין עדיין נתוני מחקר. פתח שוק חי והשאר את המסך פתוח — הרישום אוטומטי.</div>';
+    return;
+  }
+  const c = cfg();
+  const windows = new Set(arr.map(x => x.slug));
+  const resolved = arr.filter(x => x.res != null);
+  const resWindows = new Set(resolved.map(x => x.slug));
+
+  let html = '<div class="statgrid">' +
+    '<div class="kv"><div class="k">צילומי מצב</div><div class="v num">' + arr.length + '</div></div>' +
+    '<div class="kv"><div class="k">חלונות</div><div class="v num">' + windows.size + '</div></div>' +
+    '<div class="kv"><div class="k">הוכרעו</div><div class="v num">' + resWindows.size + '</div></div>' +
+    '</div>';
+
+  // calibration: does "70%" actually happen 70% of the time?
+  if(resolved.length >= 20){
+    const buckets = Array.from({length:5}, () => ({n:0, pred:0, hit:0}));
+    for(const x of resolved){
+      const p = x.p, up = x.res === x.ui;
+      const side = p >= 0.5 ? p : 1 - p;      // fold to the confident side
+      const hit = p >= 0.5 ? up : !up;
+      const b = Math.min(4, Math.floor((side - 0.5) / 0.1));
+      buckets[b].n++; buckets[b].pred += side; buckets[b].hit += hit ? 1 : 0;
+    }
+    html += '<h2 style="margin-bottom:4px">כיול המודל</h2>' +
+      '<div class="dim" style="font-size:.78rem; margin-bottom:6px">כשהמודל אומר 70% — האם זה קורה ב־70% מהמקרים? אם לא, המודל שקרן ואין יתרון.</div>';
+    const labels = ['50-60%','60-70%','70-80%','80-90%','90-100%'];
+    html += buckets.map((b,i) => {
+      if(!b.n) return '';
+      const pred = b.pred / b.n * 100, act = b.hit / b.n * 100;
+      const gap = act - pred;
+      return '<div class="journal-item"><b>' + labels[i] + '</b> · n=<span class="num">' + b.n + '</span> · ' +
+        'המודל: <span class="num">' + pred.toFixed(0) + '%</span> · בפועל: <b class="num ' +
+        (Math.abs(gap) <= 7 ? 'green' : 'red') + '">' + act.toFixed(0) + '%</b></div>';
+    }).join('');
+  }else{
+    html += '<div class="verdict dim">אחרי 20 צילומי מצב שהוכרעו יופיע כאן מבחן הכיול של המודל.</div>';
+  }
+
+  // paper backtest of the actual rule: one trade per window, at the price the book really showed
+  const seen = {}, trades = [];
+  for(const x of resolved){
+    if(seen[x.slug] || !x.ex) continue;
+    let pick = null;
+    for(let i = 0; i < x.ex.length; i++){
+      const price = x.ex[i];
+      if(price == null) continue;
+      const fair = i === x.ui ? x.p : 1 - x.p;
+      const md = x.md ? x.md[i] : null;
+      if(md != null && Math.abs(fair - md) > 0.25) continue;   // same sanity guard as the live view
+      const edge = fair - price - c.cost/100;
+      if(edge * 100 >= c.thresh && (!pick || edge > pick.edge)) pick = {i, price, edge};
+    }
+    if(pick){
+      seen[x.slug] = 1;
+      trades.push({win:x.res === pick.i, price:pick.price, edge:pick.edge, pnl:(x.res === pick.i ? 1 : 0) - pick.price - c.cost/100});
+    }
+  }
+  html += '<h2 style="margin-bottom:4px">מה הכלל הזה היה עושה בפועל</h2>';
+  if(trades.length){
+    const pnl = trades.reduce((s,t) => s + t.pnl, 0);
+    const wins = trades.filter(t => t.win).length;
+    const promised = mean(trades.map(t => t.edge)) * 100;
+    const got = pnl / trades.length * 100;
+    html += '<div class="statgrid">' +
+      '<div class="kv"><div class="k">עסקאות</div><div class="v num">' + trades.length + '</div></div>' +
+      '<div class="kv"><div class="k">פגיעה</div><div class="v num">' + (wins/trades.length*100).toFixed(0) + '%</div></div>' +
+      '<div class="kv"><div class="k">רווח למניה</div><div class="v num ' + (got >= 0 ? 'green' : 'red') + '">' +
+        got.toFixed(1) + '¢</div></div>' +
+      '</div>' +
+      '<div class="verdict">המודל הבטיח <span class="num">' + promised.toFixed(1) + '¢</span> יתרון לעסקה, ' +
+      'בפועל יצא <b class="num ' + (got >= 0 ? 'green' : 'red') + '">' + got.toFixed(1) + '¢</b>. ' +
+      (trades.length < 100
+        ? '<span class="amber">' + trades.length + ' עסקאות זה עדיין מדגם קטן מדי כדי להסיק ממנו משהו. צריך מאות.</span>'
+        : (got > 0 ? '<span class="green">היתרון שרד את המפגש עם הספר האמיתי.</span>'
+                   : '<span class="red">היתרון נעלם בביצוע. זה בדיוק מה שקורה לרוב האסטרטגיות.</span>')) +
+      '</div>';
+  }else{
+    html += '<div class="verdict dim">עוד לא הופיעה אף הזדמנות שעברה את הסף. זה נתון בפני עצמו: היתרון נדיר.</div>';
+  }
+  wrap.innerHTML = html;
+}
+
+function exportResearch(){
+  const arr = loadResearch();
+  if(!arr.length){ alert('אין נתונים לייצוא.'); return; }
+  const head = 'ts,slug,end,settlement,outcomes,up_index,K,spot,avg_window,ref_quality,sigma_1e6,secs_left,p_up,ask_avg_0,ask_avg_1,bid_0,bid_1,mid_0,mid_1,result\n';
+  const rows = arr.map(x => [
+    new Date(x.ts).toISOString(), x.slug, new Date(x.end).toISOString(), x.st, '"' + x.out + '"', x.ui,
+    x.K, x.S, x.A, x.rq, x.sg, x.r, x.p,
+    (x.ex && x.ex[0] != null ? x.ex[0] : ''), (x.ex && x.ex[1] != null ? x.ex[1] : ''),
+    (x.bd ? x.bd[0] : ''), (x.bd ? x.bd[1] : ''),
+    (x.md && x.md[0] != null ? x.md[0] : ''), (x.md && x.md[1] != null ? x.md[1] : ''),
+    x.res == null ? '' : x.res
+  ].join(','));
+  const blob = new Blob([head + rows.join('\n')], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'polymarket_research_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function clearResearch(){
+  if(confirm('למחוק את כל נתוני המחקר?')){ saveResearch([]); renderResearch(); }
+}
+
+fillCfg();
+renderResearch();
+resolveResearch();
+loadSummary();
 
 renderJournal();
 // on load: resolve finished paper trades and price the open ones off the live book
