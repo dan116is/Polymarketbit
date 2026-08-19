@@ -80,6 +80,15 @@
   ועוזר לך לתעד החלטות <b>על הנייר</b> כדי שתראה נתונים אמיתיים לפני שאתה מסכן כסף.
 </div>
 
+<!-- ==================== COLLECTED DATA ==================== -->
+<div class="card" id="dataCard">
+  <div class="outcome-head">
+    <h2 style="margin:0">📡 מה הנתונים אומרים</h2>
+    <span class="tag" id="dataUpdated"></span>
+  </div>
+  <div id="dataBody"><div class="spin">טוען נתונים שנאספו ברקע...</div></div>
+</div>
+
 <!-- ==================== FINDER ==================== -->
 <div class="card" id="finder">
   <h2 style="margin-top:0">1. בחר שוק</h2>
@@ -224,6 +233,24 @@ function loadJournal(){
   try{ return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); }catch(e){ return []; }
 }
 function saveJournal(j){ localStorage.setItem(LS_KEY, JSON.stringify(j)); }
+
+/* Gamma's /markets?slug= comes back empty for the 5-minute crypto windows even
+   after they settle — a settled window is only reachable through its event.
+   Without this fallback nothing on the page ever resolves. */
+async function fetchMarketBySlug(slug){
+  try{
+    const ms = await getJSON(GAMMA + '/markets?slug=' + encodeURIComponent(slug));
+    if(ms && ms.length) return ms[0];
+  }catch(e){ /* fall through to the event lookup */ }
+  try{
+    const evs = await getJSON(GAMMA + '/events?slug=' + encodeURIComponent(slug));
+    const ev = evs && evs[0];
+    if(ev && ev.markets && ev.markets.length){
+      return ev.markets.find(m => m.slug === slug) || ev.markets[0];
+    }
+  }catch(e){ /* leave it unresolved rather than guess */ }
+  return null;
+}
 
 /* ---------------- market finding ---------------- */
 /* 5-minute windows have clock-aligned slugs (…-<unixtime>), so the window
@@ -389,25 +416,13 @@ async function refreshBooks(){
 
 /* walk the book: sell `shares` into bids -> {proceeds, avg, unfilled} */
 function walkSell(bids, shares){
-  let remaining = shares, proceeds = 0;
-  for(const l of bids){
-    if(remaining <= 0) break;
-    const take = Math.min(remaining, l.s);
-    proceeds += take * l.p;
-    remaining -= take;
-  }
-  return {proceeds, avg: shares > remaining ? proceeds / (shares - remaining) : 0, unfilled: remaining};
+  const w = walkBook(bids, shares);
+  return {proceeds:w.total, avg:w.avg, unfilled:w.unfilled};
 }
 /* buy `shares` from asks -> {cost, avg, unfilled} */
 function walkBuy(asks, shares){
-  let remaining = shares, cost = 0;
-  for(const l of asks){
-    if(remaining <= 0) break;
-    const take = Math.min(remaining, l.s);
-    cost += take * l.p;
-    remaining -= take;
-  }
-  return {cost, avg: shares > remaining ? cost / (shares - remaining) : 0, unfilled: remaining};
+  const w = walkBook(asks, shares);
+  return {cost:w.total, avg:w.avg, unfilled:w.unfilled};
 }
 
 function renderCountdown(){
@@ -548,8 +563,7 @@ async function checkResults(){
   const slugs = [...new Set(open.map(x => x.slug))];
   for(const slug of slugs){
     try{
-      const ms = await getJSON(GAMMA + '/markets?slug=' + encodeURIComponent(slug));
-      const mk = ms[0];
+      const mk = await fetchMarketBySlug(slug);
       if(!mk || !mk.closed) continue;
       const prices = parseArr(mk.outcomePrices).map(Number);
       const winIdx = prices.findIndex(p => p >= 0.99);
@@ -708,6 +722,12 @@ function toggleEdgeSettings(){
 
 /* ---------------- math ---------------- */
 function mean(a){ return a.length ? a.reduce((x,y) => x+y, 0) / a.length : 0; }
+
+/* ===== MODEL-START =====
+   Everything between these markers is pure: no DOM, no globals, no network.
+   collector/collect.js reads this exact block out of this file and runs it,
+   so the numbers the background collector records and the numbers on screen
+   can never drift apart. Editing here changes both. */
 function erf(x){                       // Abramowitz & Stegun 7.1.26
   const s = x < 0 ? -1 : 1; x = Math.abs(x);
   const t = 1 / (1 + 0.3275911 * x);
@@ -715,6 +735,51 @@ function erf(x){                       // Abramowitz & Stegun 7.1.26
   return s * y;
 }
 function Phi(z){ return 0.5 * (1 + erf(z / Math.SQRT2)); }
+
+/* Probability that the market resolves "Up".
+   o = {type, K, S, A, elapsed, remaining, T, sigma, basisBp}
+   type 'twap'     — settles on the average over the window (Chainlink 5m/15m).
+                     The elapsed part of the average is already locked in; only
+                     the remaining stretch is still random, and the average of
+                     that stretch has a third of the variance of its endpoint.
+   type 'terminal' — settles on the closing price (hourly candle markets). */
+function fairProbability(o){
+  const T = o.T, r = Math.max(0, o.remaining), e = Math.max(0, Math.min(T, o.elapsed));
+  let projected, sd;
+  if(o.type === 'twap'){
+    projected = (e * o.A + r * o.S) / T;
+    sd = o.S * o.sigma * Math.pow(r, 1.5) / (Math.sqrt(3) * T);
+  }else{
+    projected = o.S;
+    sd = o.S * o.sigma * Math.sqrt(r);
+  }
+  const basis = o.S * ((o.basisBp || 0) / 10000);   // our feed is not the resolution feed
+  const sdTot = Math.sqrt(sd*sd + basis*basis);
+  const z = (projected - o.K) / (sdTot || 1e-9);
+  return {pUp: Math.min(0.999, Math.max(0.001, Phi(z))), projected, sd:sdTot, z};
+}
+
+/* Walk one side of the book for `shares`: what the whole size really costs. */
+function walkBook(levels, shares){
+  let remaining = shares, total = 0;
+  for(const l of (levels || [])){
+    if(remaining <= 0) break;
+    const take = Math.min(remaining, l.s);
+    total += take * l.p;
+    remaining -= take;
+  }
+  return {total, avg: shares > remaining ? total / (shares - remaining) : 0, unfilled: remaining};
+}
+
+/* Fractional Kelly with a hard cap on the share of bankroll per window. */
+function kellyFraction(p, price, fraction, cap){
+  if(!(price > 0 && price < 1)) return 0;
+  const b = (1 - price) / price;
+  const f = (b * p - (1 - p)) / b;
+  if(f <= 0) return 0;
+  return Math.min(f * fraction, cap);
+}
+/* ===== MODEL-END ===== */
 
 /* ---------------- market classification ---------------- */
 function detectAsset(txt){
@@ -894,32 +959,17 @@ function computeFair(){
   const inWin = feed.samples.filter(x => x.t >= win.startTs && x.t <= now).map(x => x.p);
   const A = inWin.length ? mean(inWin) : S;
 
-  let projected, sd;
-  if(settle.type === 'twap'){
-    // settlement variable is the average over the whole window: the elapsed part
-    // is already locked in, only the remaining part is still random
-    projected = (e * A + r * S) / T;
-    sd = S * sigma * Math.pow(r, 1.5) / (Math.sqrt(3) * T);
-  }else{
-    projected = S;
-    sd = S * sigma * Math.sqrt(r);
-  }
-  const basis = S * (cfg().basis / 10000);       // our feed ≠ the resolution feed
-  const sdTot = Math.sqrt(sd*sd + basis*basis);
-  const z = (projected - ref.K) / (sdTot || 1e-9);
-  const pUp = Math.min(0.999, Math.max(0.001, Phi(z)));
+  const m = fairProbability({type:settle.type, K:ref.K, S, A, elapsed:e, remaining:r, T,
+                             sigma, basisBp:cfg().basis});
 
-  return {win, ref, S, A, projected, sigma, sigQ, sd:sdTot, z, pUp, r, e, T, nWin:inWin.length};
+  return {win, ref, S, A, projected:m.projected, sigma, sigQ, sd:m.sd, z:m.z, pUp:m.pUp,
+          r, e, T, nWin:inWin.length};
 }
 
 /* fractional Kelly, hard-capped, and never bigger than the book can fill */
 function kellyShares(p, price, c){
-  if(!(price > 0 && price < 1)) return 0;
-  const b = (1 - price) / price;
-  const f = (b * p - (1 - p)) / b;
-  if(f <= 0) return 0;
-  const frac = Math.min(f * c.kelly, MAX_BANKROLL_SHARE);
-  return frac * c.bankroll / price;
+  const frac = kellyFraction(p, price, c.kelly, MAX_BANKROLL_SHARE);
+  return frac > 0 ? frac * c.bankroll / price : 0;
 }
 
 /* ---------------- render ---------------- */
@@ -1043,11 +1093,115 @@ function renderEdge(){
   }
 
   const warn = [];
+  const band = bandFor(c.thresh);
+  if(band && band.trades >= 50 && band.realised_cents <= 0){
+    warn.push('הנתונים שנאספו (' + band.trades + ' עסקאות בסף ' + band.threshold_cents + '¢) מראים ' +
+              band.realised_cents + '¢ למניה — הכלל הזה הפסיד בעבר. אות ירוק כאן הוא לא אישור.');
+  }
   if(f.ref.q !== 'measured') warn.push('מחיר הפתיחה הוא קירוב מנר של דקה — השאר את הכלי פתוח לפני תחילת החלון כדי שיימדד ישירות.');
   if(f.sigQ !== 'נמדד') warn.push('התנודתיות היא ברירת מחדל ולא מדידה — צריך עוד דקות של דגימות.');
   if(f.r < 20) warn.push('פחות מ־20 שניות לסיום: המודל נעשה קיצוני והנזילות נעלמת. זה החלק היקר של הלוח.');
   if(warn.length){
     html += '<div class="warn" style="font-size:.82rem">⚠️ ' + warn.map(esc).join('<br>⚠️ ') + '</div>';
+  }
+  body.innerHTML = html;
+}
+
+/* ---------------- collected data (filled by the background collector) ----------------
+   The collector runs on GitHub Actions every hour and commits data/summary.json.
+   The page reads it on open, so the first thing anyone sees is what actually
+   happened over hundreds of real windows — not a promise. */
+const SUMMARY_SOURCES = [
+  'data/summary.json',
+  'https://raw.githubusercontent.com/dan116is/Polymarketbit/main/data/summary.json'
+];
+let summary = null;
+
+async function loadSummary(){
+  // a relative fetch throws outright when the page is opened from a file:// path,
+  // so downloaded copies go straight to the published data
+  const sources = location.protocol === 'file:'
+    ? SUMMARY_SOURCES.filter(s => /^https?:/.test(s))
+    : SUMMARY_SOURCES;
+  for(const src of sources){
+    try{
+      const s = await getJSON(src + '?v=' + Date.now());
+      if(s && s.rows != null){ summary = s; break; }
+    }catch(e){ /* try the next source */ }
+  }
+  renderSummary();
+}
+
+/* the threshold band with the best lower bound (realised minus one standard error) */
+function bestBand(){
+  const rows = summary ? (summary.edge_by_threshold || []).filter(r => r.trades >= 30) : [];
+  if(!rows.length) return null;
+  return rows.reduce((a,b) =>
+    (b.realised_cents - b.stderr_cents) > (a.realised_cents - a.stderr_cents) ? b : a);
+}
+/* what the collected data says about the threshold the user is actually running */
+function bandFor(threshC){
+  if(!summary) return null;
+  const rows = (summary.edge_by_threshold || []).filter(r => r.trades > 0);
+  if(!rows.length) return null;
+  return rows.reduce((a,b) =>
+    Math.abs(b.threshold_cents - threshC) < Math.abs(a.threshold_cents - threshC) ? b : a);
+}
+
+function renderSummary(){
+  const body = document.getElementById('dataBody');
+  const tag = document.getElementById('dataUpdated');
+  if(!summary){
+    tag.textContent = '';
+    body.innerHTML = '<div class="verdict dim">עוד לא נאספו נתונים. האוסף רץ אוטומטית ב־GitHub Actions כל שעה ' +
+      'ומעדכן את הקובץ <span class="num">data/summary.json</span> — הדף קורא אותו לבד.</div>';
+    return;
+  }
+  const ageMin = Math.round((Date.now() - Date.parse(summary.updated)) / 60000);
+  tag.textContent = 'עודכן לפני ' + (ageMin < 90 ? ageMin + ' דק׳' : Math.round(ageMin/60) + ' שע׳');
+
+  let html = '<div class="statgrid">' +
+    '<div class="kv"><div class="k">חלונות שנאספו</div><div class="v num">' + summary.windows + '</div></div>' +
+    '<div class="kv"><div class="k">צילומי מצב</div><div class="v num">' + summary.rows + '</div></div>' +
+    '<div class="kv"><div class="k">עלות מונחת</div><div class="v num">' +
+      (summary.assumptions ? summary.assumptions.cost_cents_per_share : '—') + '¢</div></div>' +
+    '</div>';
+
+  const band = bestBand();
+  if(!band){
+    html += '<div class="verdict amber">⏳ <b>עוד אוסף.</b> צריך לפחות 30 עסקאות בסף אחד לפני שאפשר להגיד משהו. ' +
+      'עד אז — לא להיכנס עם כסף.</div>';
+  }else{
+    const strong = band.realised_cents > 0 && band.t_stat >= 2;
+    const weak = band.realised_cents > 0 && band.t_stat < 2;
+    html += '<div class="verdict">' + (strong
+      ? '✅ <b class="green">יש יתרון מדיד.</b> בסף של ' + band.threshold_cents + '¢: ' +
+        '<b class="num green">' + band.realised_cents.toFixed(1) + '¢</b> למניה על פני <span class="num">' +
+        band.trades + '</span> עסקאות (±' + band.stderr_cents.toFixed(1) + '¢, t=' + band.t_stat + ').'
+      : weak
+      ? '🟡 <b class="amber">נטייה חיובית, לא מובהקת.</b> בסף של ' + band.threshold_cents + '¢: ' +
+        '<span class="num">' + band.realised_cents.toFixed(1) + '¢</span> למניה ב־<span class="num">' + band.trades +
+        '</span> עסקאות, אבל הרעש (±' + band.stderr_cents.toFixed(1) + '¢) עדיין גדול מהאות. צריך עוד נתונים.'
+      : '⛔ <b class="red">אין יתרון.</b> הסף הטוב ביותר מחזיר <span class="num">' + band.realised_cents.toFixed(1) +
+        '¢</span> למניה ב־<span class="num">' + band.trades + '</span> עסקאות. הכלל הזה מפסיד כסף.') +
+      '</div>';
+  }
+
+  const rows = (summary.edge_by_threshold || []).filter(r => r.trades > 0);
+  if(rows.length){
+    html += '<h2 style="margin-bottom:4px">רווח למניה לפי סף כניסה</h2>' +
+      rows.map(r => '<div class="journal-item">סף <b>' + r.threshold_cents + '¢</b> · ' +
+        'עסקאות <span class="num">' + r.trades + '</span> · פגיעה <span class="num">' + r.hit_rate + '%</span> · ' +
+        'הובטח <span class="num">' + r.promised_cents + '¢</span> · יצא <b class="num ' +
+        (r.realised_cents > 0 ? 'green' : 'red') + '">' + r.realised_cents + '¢</b> ' +
+        '<span class="dim">±' + r.stderr_cents + '</span></div>').join('');
+  }
+  const cal = (summary.calibration || []).filter(c => c.n >= 10);
+  if(cal.length){
+    html += '<h2 style="margin-bottom:4px">כיול על נתונים אמיתיים</h2>' +
+      cal.map(c => '<div class="journal-item"><b>' + esc(c.bucket) + '</b> · n=<span class="num">' + c.n +
+        '</span> · המודל <span class="num">' + c.model + '%</span> · בפועל <b class="num ' +
+        (Math.abs(c.actual - c.model) <= 7 ? 'green' : 'red') + '">' + c.actual + '%</b></div>').join('');
   }
   body.innerHTML = html;
 }
@@ -1091,8 +1245,7 @@ async function resolveResearch(){
   const pending = [...new Set(arr.filter(x => x.res == null && x.end < Date.now() - 30000).map(x => x.slug))];
   for(const slug of pending.slice(0, 25)){
     try{
-      const ms = await getJSON(GAMMA + '/markets?slug=' + encodeURIComponent(slug));
-      const mk = ms[0];
+      const mk = await fetchMarketBySlug(slug);
       if(!mk || !mk.closed) continue;
       const prices = parseArr(mk.outcomePrices).map(Number);
       const w = prices.findIndex(p => p >= 0.99);
@@ -1217,6 +1370,7 @@ function clearResearch(){
 fillCfg();
 renderResearch();
 resolveResearch();
+loadSummary();
 
 renderJournal();
 // on load: resolve finished paper trades and price the open ones off the live book
